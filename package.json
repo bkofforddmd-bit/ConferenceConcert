@@ -1,0 +1,9 @@
+{
+  "name": "conference-as-a-concert",
+  "version": "1.0.0",
+  "description": "Song library for Conference as a Concert — Netlify Functions + Cloudflare R2",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0"
+  }
+}

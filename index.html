@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Conference as a Concert — Song Library</title>
+<link rel="icon" type="image/png" href="icon.png" />
+<link rel="apple-touch-icon" href="icon.png" />
+<style>
+  :root{
+    --brown:#2C1A0E; --gold:#C8A450; --cream:#F7F0E0; --text:#1A1008;
+    --blue:#2A5F8A; --src:#5A3800; --paper:#FBF6EA; --line:#E2D4B4;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--cream);color:var(--text);
+    font-family:Georgia,'Times New Roman',serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--blue)}
+  button{font-family:inherit;cursor:pointer}
+  input,select,textarea{font-family:Georgia,serif}
+  button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+    outline:3px solid var(--gold);outline-offset:2px}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script>
+const { useState, useMemo, useEffect } = React;
+const e = React.createElement;
+const C = {brown:"#2C1A0E",gold:"#C8A450",cream:"#F7F0E0",text:"#1A1008",
+  blue:"#2A5F8A",src:"#5A3800",paper:"#FBF6EA",line:"#E2D4B4"};
+
+const API = "/.netlify/functions";
+const GROUPINGS = [
+  {key:"session",label:"Session"},{key:"speaker",label:"Speaker"},
+  {key:"theme",label:"Theme"},{key:"flat",label:"All songs"},
+];
+function ytId(url){if(!url)return null;
+  const m=url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);return m?m[1]:null;}
+const PREVIEW_SECONDS=20;
+
+/* One shared <audio> element drives all 20s previews so only one plays at a time. */
+const previewAudio=typeof Audio!=="undefined"?new Audio():null;
+let previewStopTimer=null, previewOnEnd=null;
+function stopPreview(){
+  if(previewStopTimer){clearTimeout(previewStopTimer);previewStopTimer=null;}
+  if(previewAudio){previewAudio.pause();}
+  if(previewOnEnd){const f=previewOnEnd;previewOnEnd=null;f();}
+}
+function playPreview(song,onEnd){
+  if(!previewAudio||!song.audioUrl)return;
+  stopPreview();
+  previewOnEnd=onEnd||null;
+  const start=Math.max(0,parseInt(song.previewStart,10)||0);
+  previewAudio.src=song.audioUrl;
+  const begin=()=>{try{previewAudio.currentTime=start;}catch(_){}
+    previewAudio.play().catch(()=>{});
+    previewStopTimer=setTimeout(stopPreview,PREVIEW_SECONDS*1000);};
+  if(previewAudio.readyState>=1)begin();
+  else previewAudio.addEventListener("loadedmetadata",begin,{once:true});
+}
+
+const CONCERT_MAX_SECONDS=2*60*60; // 2 hours
+
+/* Effective length of a song in seconds: measured/auto value if known, else band
+   duration, else a sensible default so totals stay meaningful. */
+function songSeconds(song,measured){
+  const m=measured&&measured[song.id];
+  if(m&&m>0)return m;
+  const d=parseInt(song.duration,10);
+  if(d>0)return d;
+  return 210; // ~3.5 min fallback when truly unknown
+}
+function fmtTime(total){
+  total=Math.round(total);
+  const h=Math.floor(total/3600), m=Math.floor((total%3600)/60), s=total%60;
+  if(h>0)return h+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+  return m+":"+String(s).padStart(2,"0");
+}
+/* Read duration from an audio URL via a throwaway element. Resolves seconds or 0. */
+function measureAudio(url){
+  return new Promise((res)=>{
+    if(!url||typeof Audio==="undefined")return res(0);
+    const a=new Audio();
+    a.preload="metadata";
+    const done=(v)=>{a.src="";res(v);};
+    a.addEventListener("loadedmetadata",()=>done(isFinite(a.duration)?a.duration:0),{once:true});
+    a.addEventListener("error",()=>done(0),{once:true});
+    a.src=url;
+  });
+}
+
+/* The suggested live-show arc. Each section guides one part of the set. */
+const ARC=[
+  {key:"opener", label:"Opener",  target:[1,1], hint:"Gather everyone in — a warm, inviting song to begin."},
+  {key:"build",  label:"Build",   target:[2,3], hint:"Lift the energy. Momentum and joy."},
+  {key:"reflect",label:"Reflect", target:[1,2], hint:"A quieter, sacred moment to turn inward."},
+  {key:"peak",   label:"Peak",    target:[1,2], hint:"The testimony high point — the heart of the night."},
+  {key:"closer", label:"Closer",  target:[1,1], hint:"Send them out — a song they carry home."},
+];
+function targetText(t){
+  const [lo,hi]=t;
+  const n=lo===hi?lo+"":lo+"–"+hi;
+  return n+" song"+(hi===1?"":"s")+" works well here";
+}
+
+/* ----------------------------------------------------------- Header */
+function Header({tab,setTab}){
+  const tabs=[["library","Library"],["concert","Build a Concert"],["suggest","Suggest a Talk"],["band","Band Upload"]];
+  return e("header",{style:{background:C.brown,color:C.cream,
+    borderBottom:`4px solid ${C.gold}`}},
+    e("div",{style:{padding:"26px 20px 8px",textAlign:"center"}},
+      e("img",{src:"logo.png",alt:"Conference as a Concert",
+        style:{maxWidth:"min(360px,80vw)",width:"100%",height:"auto",
+          filter:"drop-shadow(0 4px 14px rgba(0,0,0,.4))"}}),
+      e("div",{style:{fontSize:15,fontStyle:"italic",color:"#E8D9B8",marginTop:6}},
+        "The Song Library"),
+    ),
+    e("nav",{style:{display:"flex",justifyContent:"center",gap:4,
+      flexWrap:"wrap",padding:"14px 12px 0"}},
+      tabs.map(([k,label])=>e("button",{key:k,onClick:()=>setTab(k),
+        "aria-current":tab===k,
+        style:{padding:"10px 18px",fontSize:14,border:0,borderRadius:"8px 8px 0 0",
+          background:tab===k?C.cream:"transparent",color:tab===k?C.brown:"#E8D9B8",
+          fontWeight:tab===k?"bold":"normal",letterSpacing:"0.03em"}},label)),
+    ),
+  );
+}
+
+/* ----------------------------------------------------------- Player */
+function Player({song}){
+  const vid=ytId(song.youtube);
+  const [mode,setMode]=useState(vid?"video":(song.audioUrl?"audio":"none"));
+  useEffect(()=>{setMode(vid?"video":(song.audioUrl?"audio":"none"));},[song.id]);
+  const hasVideo=!!vid,hasAudio=!!song.audioUrl;
+  return e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,
+    borderTop:`4px solid ${C.gold}`,borderRadius:"0 0 12px 12px",padding:"18px 20px 22px"}},
+    (hasVideo&&hasAudio)&&e("div",{style:{display:"flex",gap:8,marginBottom:14}},
+      ["video","audio"].map(m=>e("button",{key:m,onClick:()=>setMode(m),
+        "aria-pressed":mode===m,
+        style:{padding:"6px 16px",fontSize:13,borderRadius:18,
+          border:`1.5px solid ${mode===m?C.blue:C.line}`,
+          background:mode===m?C.blue:"transparent",color:mode===m?"#fff":C.text}},
+        m==="video"?"▶ Video":"♪ Audio only"))),
+    mode==="video"&&hasVideo&&e("div",{style:{position:"relative",paddingBottom:"56.25%",
+      height:0,borderRadius:8,overflow:"hidden",background:"#000"}},
+      e("iframe",{src:`https://www.youtube.com/embed/${vid}`,title:song.title,
+        allowFullScreen:true,
+        allow:"accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture",
+        style:{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}})),
+    mode==="audio"&&hasAudio&&e("div",{style:{padding:"6px 0"}},
+      e("audio",{controls:true,preload:"none",src:song.audioUrl,style:{width:"100%"}})),
+    mode==="none"&&e("div",{style:{padding:"26px 16px",textAlign:"center",color:C.src,
+      background:C.cream,borderRadius:8,fontStyle:"italic"}},
+      "This song isn't streaming yet — check back soon."),
+    e("div",{style:{marginTop:18,paddingTop:14,borderTop:`1px solid ${C.line}`,
+      fontSize:14,lineHeight:1.55}},
+      e("div",{style:{color:C.src,letterSpacing:"0.06em",fontSize:12,
+        textTransform:"uppercase",marginBottom:4}},"Source talk"),
+      song.talk&&e("div",{style:{fontWeight:"bold",fontSize:16}},"“"+song.talk+"”"),
+      song.speaker&&song.speaker!=="—"&&e("div",{style:{color:C.text}},song.speaker),
+      (song.session||song.style)&&e("div",{style:{color:C.src,fontSize:13,marginTop:2}},
+        [song.session,song.style].filter(Boolean).join("  ·  ")),
+      song.talkUrl&&e("a",{href:song.talkUrl,target:"_blank",rel:"noopener noreferrer",
+        style:{display:"inline-block",marginTop:8,fontSize:14}},"Read the talk →"),
+      e(LyricsToggle,{song})),
+    song.audioUrl&&e("div",{style:{marginTop:14}},e(PreviewButton,{song})),
+  );
+}
+
+/* ------------------------------------------------------ Preview button */
+function PreviewButton({song,small}){
+  const [playing,setPlaying]=useState(false);
+  useEffect(()=>()=>{ if(playing) stopPreview(); },[]);
+  if(!song.audioUrl)return null;
+  const toggle=(ev)=>{
+    ev.stopPropagation();
+    if(playing){stopPreview();setPlaying(false);}
+    else{setPlaying(true);playPreview(song,()=>setPlaying(false));}
+  };
+  return e("button",{onClick:toggle,"aria-pressed":playing,
+    title:"Hear a 20-second preview",
+    style:{padding:small?"3px 10px":"5px 13px",fontSize:small?12:13,borderRadius:16,
+      border:`1.5px solid ${playing?C.gold:C.line}`,
+      background:playing?C.gold:"transparent",color:playing?C.brown:C.src,
+      whiteSpace:"nowrap",transition:"all .15s"}},
+    playing?"◼ Stop":"▶ 20s preview");
+}
+
+/* ----------------------------------------------------- Lyrics toggle */
+function LyricsToggle({song,compact}){
+  const [open,setOpen]=useState(false);
+  if(!song.lyrics)return null;
+  return e("span",{style:{display:compact?"inline":"block",marginTop:compact?0:8}},
+    e("button",{onClick:(ev)=>{ev.stopPropagation();setOpen(!open);},"aria-expanded":open,
+      style:{padding:compact?"2px 8px":"4px 12px",fontSize:compact?12:13,borderRadius:14,
+        border:`1.5px solid ${open?C.gold:C.line}`,background:open?C.gold:"transparent",
+        color:open?C.brown:C.blue,cursor:"pointer"}},
+      open?"Hide lyrics":"♪ Lyrics"),
+    open&&e("pre",{style:{whiteSpace:"pre-wrap",fontFamily:"Georgia,serif",fontSize:14,
+      lineHeight:1.55,color:C.text,background:C.cream,border:`1px solid ${C.line}`,
+      borderRadius:8,padding:"14px 16px",marginTop:8}},song.lyrics));
+}
+
+/* Compact talk + lyrics links for arc/set-list rows. */
+function RowLinks({song}){
+  if(!song.talkUrl&&!song.lyrics)return null;
+  return e("div",{style:{display:"flex",gap:10,alignItems:"center",marginTop:3}},
+    song.talkUrl&&e("a",{href:song.talkUrl,target:"_blank",rel:"noopener noreferrer",
+      onClick:ev=>ev.stopPropagation(),
+      style:{fontSize:12,color:C.blue}},"Talk →"),
+    song.lyrics&&e(LyricsToggle,{song,compact:true}));
+}
+
+/* --------------------------------------------------------- Song card */
+function SongCard({song,open,onToggle}){
+  const vid=ytId(song.youtube);
+  const badge=vid?"▶ Video":(song.audioUrl?"♪ Audio":"Coming soon");
+  const badgeColor=vid?C.blue:(song.audioUrl?C.src:"#9A8A6A");
+  return e("div",{style:{background:open?C.paper:"#fff",borderRadius:12,
+    border:`1.5px solid ${open?C.gold:C.line}`,
+    boxShadow:open?"0 6px 20px rgba(44,26,14,.12)":"0 1px 3px rgba(44,26,14,.06)",
+    overflow:"hidden",transition:"border-color .15s,box-shadow .15s"}},
+    e("button",{onClick:onToggle,"aria-expanded":open,
+      style:{width:"100%",textAlign:"left",background:"transparent",border:0,
+        padding:"16px 18px",display:"flex",gap:14,alignItems:"flex-start"}},
+      e("div",{style:{flex:1,minWidth:0}},
+        e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+          e("span",{style:{fontSize:19,fontWeight:"bold",color:C.brown}},song.title),
+          e("span",{style:{fontSize:11,color:"#fff",background:badgeColor,
+            padding:"2px 9px",borderRadius:12}},badge)),
+        song.talk&&e("div",{style:{fontSize:14,color:C.text,marginTop:5,fontStyle:"italic"}},
+          "from “"+song.talk+"”"+(song.speaker&&song.speaker!=="—"?" · "+song.speaker:"")),
+        song.blurb&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:6,lineHeight:1.5}},song.blurb)),
+      e("span",{"aria-hidden":true,style:{fontSize:20,color:C.gold,
+        transform:open?"rotate(180deg)":"none",transition:"transform .2s",marginTop:2}},"⌄")),
+    open&&e(Player,{song}),
+  );
+}
+
+/* ---------------------------------------------------------- Library */
+function Library({songs,loading,error}){
+  const [group,setGroup]=useState("session");
+  const [query,setQuery]=useState("");
+  const [openId,setOpenId]=useState(null);
+  const filtered=useMemo(()=>{
+    const q=query.trim().toLowerCase();
+    if(!q)return songs;
+    return songs.filter(s=>[s.title,s.talk,s.speaker,s.theme,s.session,s.style]
+      .filter(Boolean).join(" ").toLowerCase().includes(q));
+  },[query,songs]);
+  const groups=useMemo(()=>{
+    if(group==="flat")return[{name:null,items:filtered}];
+    const map=new Map();
+    filtered.forEach(s=>{const k=s[group]||"Other";if(!map.has(k))map.set(k,[]);map.get(k).push(s);});
+    return[...map.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([name,items])=>({name,items}));
+  },[group,filtered]);
+
+  return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"0 20px 60px"}},
+    e("div",{style:{display:"flex",flexWrap:"wrap",gap:14,alignItems:"center",
+      justifyContent:"space-between",padding:"22px 0 6px"}},
+      e("div",{role:"group","aria-label":"Group songs by",
+        style:{display:"flex",flexWrap:"wrap",gap:6}},
+        e("span",{style:{fontSize:13,color:C.src,alignSelf:"center",marginRight:4}},"Group by:"),
+        GROUPINGS.map(g=>e("button",{key:g.key,onClick:()=>setGroup(g.key),
+          "aria-pressed":group===g.key,
+          style:{padding:"7px 14px",fontSize:14,borderRadius:20,
+            border:`1.5px solid ${group===g.key?C.brown:C.line}`,
+            background:group===g.key?C.brown:C.paper,
+            color:group===g.key?C.cream:C.text}},g.label))),
+      e("input",{type:"search",value:query,onChange:ev=>setQuery(ev.target.value),
+        placeholder:"Search title, talk, speaker…","aria-label":"Search songs",
+        style:{flex:"1 1 220px",maxWidth:300,padding:"9px 14px",fontSize:15,
+          borderRadius:8,border:`1.5px solid ${C.line}`,background:C.paper,color:C.text}})),
+    loading&&e("p",{style:{textAlign:"center",color:C.src,padding:"40px 0",fontStyle:"italic"}},
+      "Loading the library…"),
+    error&&e("p",{style:{textAlign:"center",color:"#9B2D20",padding:"20px 0"}},error),
+    !loading&&!error&&filtered.length===0&&e("p",{style:{textAlign:"center",color:C.src,
+      fontStyle:"italic",padding:"40px 0"}},
+      songs.length===0?"No songs yet — the band will add the first one soon.":"No songs match your search."),
+    groups.map((g,gi)=>e("section",{key:g.name||gi,style:{marginTop:gi?34:18}},
+      g.name&&e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
+        color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,marginBottom:14}},
+        g.name,e("span",{style:{color:"#B0A176",marginLeft:8,fontSize:13}},g.items.length)),
+      e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+        g.items.map(s=>e(SongCard,{key:s.id,song:s,open:openId===s.id,
+          onToggle:()=>setOpenId(openId===s.id?null:s.id)}))))),
+  );
+}
+
+/* ---------------------------------------------------- Suggest form */
+const field={padding:"10px 12px",fontSize:15,borderRadius:8,
+  border:`1.5px solid ${C.line}`,background:"#fff",color:C.text,width:"100%"};
+const lbl={fontSize:13,color:C.src,marginBottom:5,display:"block",letterSpacing:"0.03em"};
+
+function Suggest(){
+  const [f,setF]=useState({talk:"",speaker:"",session:"",note:"",from:""});
+  const [state,setState]=useState("idle"); // idle|sending|done|error
+  const [msg,setMsg]=useState("");
+  const up=(k)=>(ev)=>setF({...f,[k]:ev.target.value});
+  async function submit(){
+    if(!f.talk.trim()){setState("error");setMsg("Please name the talk.");return;}
+    setState("sending");setMsg("");
+    try{
+      const r=await fetch(`${API}/suggest`,{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify(f)});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Something went wrong");
+      setState("done");setF({talk:"",speaker:"",session:"",note:"",from:""});
+    }catch(err){setState("error");setMsg(err.message);}
+  }
+  if(state==="done")return e("main",{style:{maxWidth:560,margin:"0 auto",padding:"50px 20px"}},
+    e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,borderRadius:12,
+      padding:"34px 26px",textAlign:"center"}},
+      e("div",{style:{fontSize:34,marginBottom:8}},"♪"),
+      e("h2",{style:{margin:"0 0 8px",color:C.brown}},"Thank you!"),
+      e("p",{style:{color:C.src,lineHeight:1.6,margin:"0 0 18px"}},
+        "Your suggestion is with the band. Maybe it becomes the next song."),
+      e("button",{onClick:()=>setState("idle"),
+        style:{padding:"10px 22px",fontSize:14,borderRadius:8,border:0,
+          background:C.brown,color:C.cream}},"Suggest another")));
+  return e("main",{style:{maxWidth:560,margin:"0 auto",padding:"28px 20px 60px"}},
+    e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
+      "Heard a General Conference talk that should become a song? Tell the band about it."),
+    e("div",{style:{display:"flex",flexDirection:"column",gap:16}},
+      e("div",null,e("label",{style:lbl,htmlFor:"s-talk"},"Talk title *"),
+        e("input",{id:"s-talk",style:field,value:f.talk,onChange:up("talk"),
+          placeholder:"e.g. The Ministry of Angels"})),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 200px"}},e("label",{style:lbl,htmlFor:"s-speaker"},"Speaker"),
+          e("input",{id:"s-speaker",style:field,value:f.speaker,onChange:up("speaker"),
+            placeholder:"e.g. Jeffrey R. Holland"})),
+        e("div",{style:{flex:"1 1 140px"}},e("label",{style:lbl,htmlFor:"s-session"},"Session"),
+          e("input",{id:"s-session",style:field,value:f.session,onChange:up("session"),
+            placeholder:"e.g. October 2008"}))),
+      e("div",null,e("label",{style:lbl,htmlFor:"s-note"},"Why this one? (optional)"),
+        e("textarea",{id:"s-note",style:{...field,minHeight:90,resize:"vertical"},
+          value:f.note,onChange:up("note"),
+          placeholder:"A line, a theme, a moment that moved you…"})),
+      e("div",null,e("label",{style:lbl,htmlFor:"s-from"},"Your name (optional)"),
+        e("input",{id:"s-from",style:field,value:f.from,onChange:up("from"),placeholder:"So we can thank you"})),
+      state==="error"&&e("p",{style:{color:"#9B2D20",margin:0}},msg),
+      e("button",{onClick:submit,disabled:state==="sending",
+        style:{padding:"12px 24px",fontSize:15,borderRadius:8,border:0,
+          background:state==="sending"?"#8A7A5A":C.brown,color:C.cream,
+          alignSelf:"flex-start"}},
+        state==="sending"?"Sending…":"Send to the band")),
+  );
+}
+
+/* ------------------------------------------------------- Band upload */
+function Band({onAdded}){
+  const [pw,setPw]=useState(sessionStorage.getItem("cac_pw")||"");
+  const [file,setFile]=useState(null);
+  const [drag,setDrag]=useState(false);
+  const [s,setS]=useState({title:"",talk:"",speaker:"",session:"",theme:"",
+    style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",blurb:""});
+  const [state,setState]=useState("idle");
+  const [msg,setMsg]=useState("");
+  const [gdocUrl,setGdocUrl]=useState("");
+  const [gdocState,setGdocState]=useState("idle"); // idle|loading|preview|error
+  const [gdocMsg,setGdocMsg]=useState("");
+  const [gdocPreview,setGdocPreview]=useState(""); // fetched text, awaiting confirmation
+  const up=(k)=>(ev)=>setS({...s,[k]:ev.target.value});
+
+  async function importGdoc(){
+    if(!gdocUrl.trim()){setGdocState("error");setGdocMsg("Paste a Google Doc link first.");return;}
+    setGdocState("loading");setGdocMsg("");setGdocPreview("");
+    try{
+      const r=await fetch(`${API}/gdoc`,{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({url:gdocUrl})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not import");
+      setGdocPreview(d.lyrics);
+      setGdocState("preview");
+      setGdocMsg("");
+    }catch(err){setGdocState("error");setGdocMsg(err.message);}
+  }
+  function useImported(){
+    setS(v=>({...v,lyrics:gdocPreview}));
+    setGdocState("idle");setGdocPreview("");
+    setGdocMsg("Lyrics added below — edit if needed before saving.");
+  }
+  function cancelImport(){
+    setGdocState("idle");setGdocPreview("");setGdocMsg("");
+  }
+
+  function pick(f){
+    if(!f)return;
+    if(!/^audio\//.test(f.type)&&!/\.(mp3|m4a|wav|ogg|aac)$/i.test(f.name)){
+      setMsg("Please choose an audio file (mp3, m4a, wav…).");setState("error");return;}
+    setFile(f);setMsg("");if(state==="error")setState("idle");
+    if(!s.title){const base=f.name.replace(/\.[^.]+$/,"");setS(v=>({...v,title:base}));}
+  }
+  function fileToB64(f){return new Promise((res,rej)=>{
+    const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);
+    r.onerror=()=>rej(new Error("Could not read the file"));r.readAsDataURL(f);});}
+
+  async function submit(){
+    if(!pw){setState("error");setMsg("Enter the band password.");return;}
+    if(!s.title.trim()){setState("error");setMsg("Give the song a title.");return;}
+    if(!file&&!s.youtube&&!s.talkUrl){setState("error");
+      setMsg("Add an MP3 or at least a YouTube link.");return;}
+    setState("sending");setMsg("Uploading…");
+    try{
+      const payload={song:s};
+      if(file){payload.filename=file.name;payload.contentType=file.type||"audio/mpeg";
+        payload.dataBase64=await fileToB64(file);}
+      const r=await fetch(`${API}/upload`,{method:"POST",
+        headers:{"Content-Type":"application/json","x-upload-password":pw},
+        body:JSON.stringify(payload)});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Upload failed");
+      sessionStorage.setItem("cac_pw",pw);
+      setState("done");setMsg("");setFile(null);
+      setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",blurb:""});
+      setGdocUrl("");setGdocState("idle");setGdocMsg("");setGdocPreview("");
+      onAdded&&onAdded(d.entry);
+    }catch(err){setState("error");setMsg(err.message);}
+  }
+
+  return e("main",{style:{maxWidth:620,margin:"0 auto",padding:"28px 20px 60px"}},
+    e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
+      "Band members only. Drop an MP3, add the talk details, and the song goes live for everyone."),
+    e("div",null,e("label",{style:lbl,htmlFor:"b-pw"},"Band password"),
+      e("input",{id:"b-pw",type:"password",style:{...field,maxWidth:260},value:pw,
+        onChange:ev=>setPw(ev.target.value),placeholder:"••••••••"})),
+    e("div",{onDragOver:ev=>{ev.preventDefault();setDrag(true);},
+      onDragLeave:()=>setDrag(false),
+      onDrop:ev=>{ev.preventDefault();setDrag(false);pick(ev.dataTransfer.files[0]);},
+      style:{marginTop:18,border:`2.5px dashed ${drag?C.gold:C.line}`,borderRadius:12,
+        background:drag?C.paper:"#fff",padding:"30px 20px",textAlign:"center",
+        transition:"all .15s"}},
+      e("div",{style:{fontSize:30,color:C.gold,marginBottom:6}},"♪"),
+      e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:4}},
+        file?file.name:"Drag an MP3 here"),
+      e("div",{style:{fontSize:13,color:C.src,marginBottom:12}},
+        file?`${(file.size/1048576).toFixed(1)} MB`:"or"),
+      e("label",{style:{display:"inline-block",padding:"8px 18px",fontSize:14,
+        borderRadius:8,background:C.brown,color:C.cream,cursor:"pointer"}},
+        "Choose file",
+        e("input",{type:"file",accept:"audio/*,.mp3,.m4a,.wav,.ogg,.aac",
+          onChange:ev=>pick(ev.target.files[0]),style:{display:"none"}}))),
+    e("div",{style:{display:"flex",flexDirection:"column",gap:14,marginTop:20}},
+      e("div",null,e("label",{style:lbl,htmlFor:"b-title"},"Song title *"),
+        e("input",{id:"b-title",style:field,value:s.title,onChange:up("title")})),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 240px"}},e("label",{style:lbl,htmlFor:"b-talk"},"Source talk"),
+          e("input",{id:"b-talk",style:field,value:s.talk,onChange:up("talk")})),
+        e("div",{style:{flex:"1 1 160px"}},e("label",{style:lbl,htmlFor:"b-speaker"},"Speaker"),
+          e("input",{id:"b-speaker",style:field,value:s.speaker,onChange:up("speaker")}))),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 150px"}},e("label",{style:lbl,htmlFor:"b-session"},"Session"),
+          e("input",{id:"b-session",style:field,value:s.session,onChange:up("session"),
+            placeholder:"October 2025"})),
+        e("div",{style:{flex:"1 1 150px"}},e("label",{style:lbl,htmlFor:"b-theme"},"Theme"),
+          e("input",{id:"b-theme",style:field,value:s.theme,onChange:up("theme"),
+            placeholder:"Comfort & Hope"})),
+        e("div",{style:{flex:"1 1 150px"}},e("label",{style:lbl,htmlFor:"b-style"},"Style"),
+          e("input",{id:"b-style",style:field,value:s.style,onChange:up("style"),
+            placeholder:"after Ben Rector"}))),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 240px"}},e("label",{style:lbl,htmlFor:"b-talkurl"},"Talk URL"),
+          e("input",{id:"b-talkurl",style:field,value:s.talkUrl,onChange:up("talkUrl"),
+            placeholder:"churchofjesuschrist.org/…"})),
+        e("div",{style:{flex:"1 1 200px"}},e("label",{style:lbl,htmlFor:"b-yt"},"YouTube URL"),
+          e("input",{id:"b-yt",style:field,value:s.youtube,onChange:up("youtube"),
+            placeholder:"youtu.be/…"}))),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 220px"}},
+          e("label",{style:lbl,htmlFor:"b-prev"},"Preview start (seconds into the song)"),
+          e("input",{id:"b-prev",type:"number",min:"0",style:field,value:s.previewStart,
+            onChange:up("previewStart"),placeholder:"0 — e.g. 45 to start at the chorus"})),
+        e("div",{style:{flex:"1 1 200px"}},
+          e("label",{style:lbl,htmlFor:"b-dur"},"Length (seconds, for video-only songs)"),
+          e("input",{id:"b-dur",type:"number",min:"0",style:field,value:s.duration,
+            onChange:up("duration"),placeholder:"auto-detected for MP3s"}))),
+      e("div",null,e("label",{style:lbl,htmlFor:"b-gdoc"},"Import lyrics from a Google Doc"),
+        e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+          e("input",{id:"b-gdoc",style:{...field,flex:"1 1 240px"},value:gdocUrl,
+            onChange:ev=>setGdocUrl(ev.target.value),
+            placeholder:"Paste a Google Doc link (shared “anyone with the link”)"}),
+          e("button",{onClick:importGdoc,disabled:gdocState==="loading",
+            style:{padding:"10px 18px",fontSize:14,borderRadius:8,border:0,whiteSpace:"nowrap",
+              background:gdocState==="loading"?"#8A7A5A":C.blue,color:"#fff"}},
+            gdocState==="loading"?"Fetching…":"Import")),
+        gdocState==="preview"&&e("div",{style:{marginTop:10,border:`1.5px solid ${C.gold}`,
+          borderRadius:10,background:C.paper,padding:"14px 16px"}},
+          e("div",{style:{fontSize:12,letterSpacing:"0.06em",textTransform:"uppercase",
+            color:C.src,marginBottom:8}},"Preview — from your Google Doc"),
+          e("pre",{style:{whiteSpace:"pre-wrap",fontFamily:"Georgia,serif",fontSize:14,
+            lineHeight:1.55,color:C.text,maxHeight:260,overflow:"auto",margin:0,
+            background:"#fff",border:`1px solid ${C.line}`,borderRadius:8,padding:"12px 14px"}},
+            gdocPreview),
+          e("div",{style:{fontSize:12,color:C.src,margin:"8px 0 10px"}},
+            gdocPreview.length+" characters · plain text only (formatting from the Doc isn't carried over)"),
+          e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+            e("button",{onClick:useImported,
+              style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
+                background:C.brown,color:C.cream}},"Use these lyrics"),
+            e("button",{onClick:cancelImport,
+              style:{padding:"9px 18px",fontSize:14,borderRadius:8,
+                border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
+              "Cancel"))),
+        gdocMsg&&e("div",{style:{fontSize:13,marginTop:6,
+          color:gdocState==="error"?"#9B2D20":C.src}},gdocMsg)),
+      e("div",null,e("label",{style:lbl,htmlFor:"b-lyrics"},"Lyrics (shown in the app)"),
+        e("textarea",{id:"b-lyrics",style:{...field,minHeight:140,resize:"vertical"},
+          value:s.lyrics,onChange:up("lyrics"),
+          placeholder:"Paste the full lyrics here. Line breaks are kept."})),
+      e("div",null,e("label",{style:lbl,htmlFor:"b-blurb"},"Blurb"),
+        e("textarea",{id:"b-blurb",style:{...field,minHeight:70,resize:"vertical"},
+          value:s.blurb,onChange:up("blurb"),placeholder:"One line about the song."})),
+      msg&&e("p",{style:{margin:0,color:state==="error"?"#9B2D20":C.src}},msg),
+      state==="done"&&e("p",{style:{margin:0,color:C.blue,fontWeight:"bold"}},
+        "Added — it's live in the library."),
+      e("button",{onClick:submit,disabled:state==="sending",
+        style:{padding:"12px 26px",fontSize:15,borderRadius:8,border:0,
+          background:state==="sending"?"#8A7A5A":C.brown,color:C.cream,alignSelf:"flex-start"}},
+        state==="sending"?"Uploading…":"Add song to library")),
+  );
+}
+
+/* ----------------------------------------------------- Concert builder */
+function ConcertBuilder({songs,loading}){
+  // picked: array of {id, section} so songs can belong to an arc section (or "").
+  const [picked,setPicked]=useState([]);
+  const [name,setName]=useState("");
+  const [query,setQuery]=useState("");
+  const [useArc,setUseArc]=useState(false);
+  const [addingTo,setAddingTo]=useState(null); // section key the user is filling, or null
+  const [measured,setMeasured]=useState({});   // songId -> seconds
+  const [state,setState]=useState("idle");
+  const [shareUrl,setShareUrl]=useState("");
+  const [msg,setMsg]=useState("");
+  const byId=useMemo(()=>new Map(songs.map(s=>[s.id,s])),[songs]);
+
+  // Measure durations of audio songs once, so totals are real.
+  useEffect(()=>{
+    let alive=true;
+    (async()=>{
+      for(const s of songs){
+        if(s.audioUrl&&!(s.id in measured)){
+          const secs=await measureAudio(s.audioUrl);
+          if(!alive)return;
+          if(secs>0)setMeasured(m=>({...m,[s.id]:secs}));
+        }
+      }
+    })();
+    return ()=>{alive=false;};
+  },[songs]);
+
+  const pickedSongs=picked.map(p=>({...p,song:byId.get(p.id)})).filter(p=>p.song);
+  const totalSecs=pickedSongs.reduce((t,p)=>t+songSeconds(p.song,measured),0);
+  const atCap=totalSecs>=CONCERT_MAX_SECONDS;
+  const overCap=totalSecs>CONCERT_MAX_SECONDS;
+
+  const available=useMemo(()=>{
+    const q=query.trim().toLowerCase();
+    const inSet=new Set(picked.map(p=>p.id));
+    return songs.filter(s=>!inSet.has(s.id)).filter(s=>
+      !q||[s.title,s.talk,s.speaker].filter(Boolean).join(" ").toLowerCase().includes(q));
+  },[songs,picked,query]);
+
+  function add(id,section){
+    // Hard cap: block adding once we've REACHED the limit. A song added while
+    // still under is allowed to finish beyond the limit.
+    if(atCap){setMsg("You've reached the 2-hour limit — remove a song to add another.");
+      setState("error");return;}
+    setMsg("");if(state==="error")setState("idle");
+    setPicked([...picked,{id,section:section||""}]);
+    setAddingTo(null);
+  }
+  const remove=(id)=>setPicked(picked.filter(p=>p.id!==id));
+  function move(id,dir){
+    const i=picked.findIndex(p=>p.id===id), j=i+dir;
+    if(i<0||j<0||j>=picked.length)return;
+    const next=picked.slice(); const t=next[i]; next[i]=next[j]; next[j]=t; setPicked(next);
+  }
+
+  function startArc(){ setUseArc(true); setMsg(""); }
+
+  async function save(){
+    if(picked.length===0){setState("error");setMsg("Add at least one song.");return;}
+    setState("saving");setMsg("");
+    try{
+      const r=await fetch(`${API}/concert`,{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({name:name||"My Concert",songIds:picked.map(p=>p.id)})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not save");
+      setShareUrl(`${location.origin}${location.pathname}?concert=${d.id}`);
+      setState("done");
+    }catch(err){setState("error");setMsg(err.message);}
+  }
+
+  if(loading)return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"40px 20px"}},
+    e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic"}},"Loading songs…"));
+
+  // A small reusable row for a picked song.
+  const pickedRow=(p,i)=>e("div",{key:p.id,
+    style:{display:"flex",alignItems:"center",gap:10,background:C.paper,
+      border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 12px"}},
+    e("div",{style:{display:"flex",flexDirection:"column",gap:2}},
+      e("button",{onClick:()=>move(p.id,-1),disabled:i===0,"aria-label":"Move up",
+        style:{border:0,background:"transparent",color:i===0?"#CFC2A2":C.src,
+          fontSize:14,cursor:i===0?"default":"pointer",lineHeight:1}},"▲"),
+      e("button",{onClick:()=>move(p.id,1),disabled:i===pickedSongs.length-1,
+        "aria-label":"Move down",
+        style:{border:0,background:"transparent",
+          color:i===pickedSongs.length-1?"#CFC2A2":C.src,
+          fontSize:14,cursor:i===pickedSongs.length-1?"default":"pointer",lineHeight:1}},"▼")),
+    e("span",{style:{color:C.gold,fontWeight:"bold",width:20,textAlign:"right"}},i+1),
+    e("div",{style:{flex:1,minWidth:0}},
+      e("div",{style:{fontWeight:"bold",color:C.brown,fontSize:15}},p.song.title),
+      e("div",{style:{fontSize:12,color:C.src,fontStyle:"italic",
+        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
+        (p.song.talk?p.song.talk+" · ":"")+fmtTime(songSeconds(p.song,measured))
+        +(measured[p.song.id]||p.song.duration>0?"":" (est.)")),
+      e(RowLinks,{song:p.song})),
+    e(PreviewButton,{song:p.song,small:true}),
+    e("button",{onClick:()=>remove(p.id),"aria-label":"Remove",
+      style:{border:0,background:"transparent",color:"#9B2D20",fontSize:18,lineHeight:1}},"×"));
+
+  // Picker list (shared by free-add and per-section add).
+  const picker=(section)=>e("div",{style:{display:"flex",flexDirection:"column",gap:8,
+    marginTop:section?10:14}},
+    available.length===0
+      ? e("p",{style:{color:C.src,fontStyle:"italic"}},
+          songs.length===0?"No songs in the library yet.":"Nothing left to add.")
+      : available.map(s=>e("div",{key:s.id,
+          style:{display:"flex",alignItems:"center",gap:10,background:"#fff",
+            border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 12px"}},
+          e("div",{style:{flex:1,minWidth:0}},
+            e("div",{style:{fontWeight:"bold",color:C.brown,fontSize:15}},s.title),
+            e("div",{style:{fontSize:12,color:C.src,fontStyle:"italic",
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
+              (s.talk?"from “"+s.talk+"” · ":"")+fmtTime(songSeconds(s,measured))
+              +(measured[s.id]||s.duration>0?"":" (est.)")),
+            e(RowLinks,{song:s})),
+          e(PreviewButton,{song:s,small:true}),
+          e("button",{onClick:()=>add(s.id,section),disabled:atCap,
+            style:{padding:"6px 14px",fontSize:13,borderRadius:16,border:0,
+              background:atCap?"#D9CBA8":C.gold,color:C.brown,fontWeight:"bold",
+              whiteSpace:"nowrap",cursor:atCap?"default":"pointer"}},"+ Add"))));
+
+  const timeColor=overCap?"#9B2D20":(atCap?C.src:C.brown);
+
+  return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"24px 20px 60px"}},
+    e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
+      "Preview songs, add the ones you love, and arrange your set. Save to get a share link anyone can play."),
+
+    /* time meter */
+    e("div",{style:{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",
+      background:C.paper,border:`1.5px solid ${overCap?"#9B2D20":C.line}`,
+      borderRadius:10,padding:"12px 16px",marginBottom:20}},
+      e("div",{style:{fontSize:22,fontWeight:"bold",color:timeColor,minWidth:90}},
+        fmtTime(totalSecs)),
+      e("div",{style:{flex:1,minWidth:160}},
+        e("div",{style:{height:8,background:"#E8DCC0",borderRadius:5,overflow:"hidden"}},
+          e("div",{style:{height:"100%",width:Math.min(100,totalSecs/CONCERT_MAX_SECONDS*100)+"%",
+            background:overCap?"#9B2D20":C.gold,transition:"width .2s"}})),
+        e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
+          atCap?"2-hour limit reached — remove a song to add more."
+               :"of a 2-hour maximum  ·  "+pickedSongs.length+" songs")),
+    ),
+
+    e("div",{style:{display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}},
+
+      /* ---------------- left: the set list ---------------- */
+      e("div",{style:{flex:"1 1 340px",order:1}},
+        e("div",{style:{display:"flex",justifyContent:"space-between",
+          alignItems:"baseline",borderBottom:`2px solid ${C.gold}`,paddingBottom:7}},
+          e("h2",{style:{fontSize:14,letterSpacing:"0.12em",textTransform:"uppercase",
+            color:C.brown,margin:0}},"Your set list ",
+            e("span",{style:{color:"#B0A176"}},"("+pickedSongs.length+")"))),
+        e("input",{value:name,onChange:ev=>setName(ev.target.value),
+          placeholder:"Name your concert…",style:{...field,margin:"14px 0"}}),
+
+        !useArc&&picked.length===0&&e("div",{style:{background:"#fff",
+          border:`1.5px dashed ${C.gold}`,borderRadius:12,padding:"18px",marginBottom:14}},
+          e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:4}},
+            "Not sure where to start?"),
+          e("p",{style:{fontSize:13.5,color:C.src,lineHeight:1.5,margin:"0 0 12px"}},
+            "Follow a suggested arc — five moments that shape a memorable night: "
+            +"Opener, Build, Reflect, Peak, Closer."),
+          e("button",{onClick:startArc,
+            style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
+              background:C.brown,color:C.cream}},"Start from a suggested arc")),
+
+        /* arc view */
+        useArc
+          ? e("div",{style:{display:"flex",flexDirection:"column",gap:18}},
+              ARC.map(sec=>{
+                const rows=pickedSongs.filter(p=>p.section===sec.key);
+                const n=rows.length, [lo,hi]=sec.target;
+                const cue=n===0?null:(n>=lo&&n<=hi
+                  ?{txt:"✓ just right",col:"#4A7A4A"}
+                  :(n>hi?{txt:"more than suggested",col:"#9B6A2D"}:null));
+                return e("div",{key:sec.key,style:{border:`1.5px solid ${C.line}`,
+                  borderRadius:12,padding:"14px",background:"#fff"}},
+                  e("div",{style:{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}},
+                    e("div",{style:{fontSize:13,letterSpacing:"0.1em",textTransform:"uppercase",
+                      color:C.brown,fontWeight:"bold"}},sec.label),
+                    cue&&e("span",{style:{fontSize:12,color:cue.col,fontWeight:"bold"}},cue.txt)),
+                  e("div",{style:{fontSize:13,color:C.src,fontStyle:"italic",
+                    margin:"3px 0 2px"}},sec.hint),
+                  e("div",{style:{fontSize:12,color:"#A8986F",margin:"0 0 10px"}},
+                    targetText(sec.target)),
+                  rows.length>0&&e("div",{style:{display:"flex",flexDirection:"column",
+                    gap:8,marginBottom:10}},
+                    rows.map(p=>pickedRow(p,picked.findIndex(x=>x.id===p.id)))),
+                  addingTo===sec.key
+                    ? e("div",null,
+                        e("input",{type:"search",value:query,
+                          onChange:ev=>setQuery(ev.target.value),
+                          placeholder:"Search the library…",style:{...field}}),
+                        picker(sec.key),
+                        e("button",{onClick:()=>{setAddingTo(null);setQuery("");},
+                          style:{marginTop:8,padding:"6px 14px",fontSize:13,borderRadius:8,
+                            border:`1.5px solid ${C.line}`,background:"transparent",
+                            color:C.src}},"Done"))
+                    : e("button",{onClick:()=>{setAddingTo(sec.key);setQuery("");},
+                        disabled:atCap,
+                        style:{padding:"7px 14px",fontSize:13,borderRadius:16,
+                          border:`1.5px solid ${atCap?"#D9CBA8":C.gold}`,
+                          background:"transparent",color:atCap?"#B0A176":C.src,
+                          cursor:atCap?"default":"pointer"}},
+                        "+ Add to "+sec.label));
+              }),
+              e("button",{onClick:()=>setUseArc(false),
+                style:{padding:"7px 14px",fontSize:13,borderRadius:8,
+                  border:`1.5px solid ${C.line}`,background:"transparent",color:C.src,
+                  alignSelf:"flex-start"}},"Switch to a free-form list"))
+          : pickedSongs.length>0
+            ? e("div",{style:{display:"flex",flexDirection:"column",gap:8}},
+                pickedSongs.map((p,i)=>pickedRow(p,i)))
+            : !useArc&&e("p",{style:{color:C.src,fontStyle:"italic",padding:"4px 0"}},
+                "No songs yet — add some from the right, or start from the arc above."),
+
+        /* save */
+        picked.length>0&&e("div",{style:{marginTop:18}},
+          state==="done"
+            ? e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,
+                borderRadius:10,padding:"16px"}},
+                e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:8}},
+                  "Your concert is saved ♪"),
+                e("input",{readOnly:true,value:shareUrl,onFocus:ev=>ev.target.select(),
+                  style:{...field,fontSize:13,marginBottom:8}}),
+                e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+                  e("button",{onClick:()=>{navigator.clipboard&&navigator.clipboard.writeText(shareUrl);},
+                    style:{padding:"8px 16px",fontSize:13,borderRadius:8,border:0,
+                      background:C.brown,color:C.cream}},"Copy link"),
+                  e("a",{href:shareUrl,
+                    style:{padding:"8px 16px",fontSize:13,borderRadius:8,
+                      background:C.blue,color:"#fff",textDecoration:"none"}},"Play it now →")))
+            : e("button",{onClick:save,disabled:state==="saving",
+                style:{padding:"12px 24px",fontSize:15,borderRadius:8,border:0,
+                  background:state==="saving"?"#8A7A5A":C.brown,color:C.cream}},
+                state==="saving"?"Saving…":"Save & get share link")),
+        state==="error"&&e("p",{style:{color:"#9B2D20",marginTop:10}},msg)),
+
+      /* ---------------- right: free-form library add ---------------- */
+      !useArc&&e("div",{style:{flex:"1 1 320px",order:2}},
+        e("h2",{style:{fontSize:14,letterSpacing:"0.12em",textTransform:"uppercase",
+          color:C.brown,borderBottom:`2px solid ${C.line}`,paddingBottom:7}},"Add songs"),
+        e("input",{type:"search",value:query,onChange:ev=>setQuery(ev.target.value),
+          placeholder:"Search the library…",style:{...field,margin:"14px 0 0"}}),
+        picker(null)),
+    ),
+  );
+}
+
+/* ------------------------------------------------------ Concert player */
+function ConcertPlayer({id}){
+  const [data,setData]=useState(null);
+  const [error,setError]=useState("");
+  const [idx,setIdx]=useState(-1); // -1 = not started
+  const [playing,setPlaying]=useState(false);
+  const audioRef=React.useRef(null);
+
+  useEffect(()=>{ stopPreview(); // make sure no library preview is running
+    (async()=>{
+      try{
+        const r=await fetch(`${API}/concert?id=${encodeURIComponent(id)}`);
+        const d=await r.json();
+        if(!r.ok)throw new Error(d.error||"Could not load concert");
+        setData(d);
+      }catch(err){setError(err.message);}
+    })();
+  },[id]);
+
+  const songs=data?data.songs:[];
+  const current=idx>=0?songs[idx]:null;
+  const curVid=current?ytId(current.youtube):null;
+
+  // Drive audio playback when the current (audio) song changes.
+  useEffect(()=>{
+    if(!current)return;
+    if(current.audioUrl&&!curVid&&audioRef.current){
+      audioRef.current.src=current.audioUrl;
+      audioRef.current.currentTime=0;
+      audioRef.current.play().then(()=>setPlaying(true)).catch(()=>setPlaying(false));
+    }
+  },[idx]);
+
+  const start=()=>{ if(songs.length){setIdx(0);} };
+  const next=()=>{ setIdx(i=>i+1<songs.length?i+1:i); if(idx+1>=songs.length)setPlaying(false); };
+  const prev=()=>{ setIdx(i=>i>0?i-1:0); };
+
+  const back=()=>{ const u=location.origin+location.pathname; history.pushState({},"",u);
+    location.reload(); };
+
+  if(error)return e("main",{style:{maxWidth:620,margin:"0 auto",padding:"50px 20px",textAlign:"center"}},
+    e("p",{style:{color:"#9B2D20"}},error),
+    e("button",{onClick:back,style:{padding:"10px 20px",borderRadius:8,border:0,
+      background:C.brown,color:C.cream}},"Back to the library"));
+  if(!data)return e("main",{style:{maxWidth:620,margin:"0 auto",padding:"50px 20px",textAlign:"center"}},
+    e("p",{style:{color:C.src,fontStyle:"italic"}},"Loading the concert…"));
+
+  return e("main",{style:{maxWidth:760,margin:"0 auto",padding:"28px 20px 60px"}},
+    e("div",{style:{textAlign:"center",marginBottom:20}},
+      e("div",{style:{fontSize:12,letterSpacing:"0.3em",textTransform:"uppercase",
+        color:C.gold,marginBottom:6}},"A Concert"),
+      e("h2",{style:{margin:0,fontSize:"clamp(24px,4.5vw,36px)",color:C.brown}},data.name),
+      e("div",{style:{color:C.src,fontSize:14,marginTop:6}},songs.length+" songs")),
+
+    idx<0
+      ? e("div",{style:{textAlign:"center",padding:"30px 0"}},
+          e("button",{onClick:start,disabled:songs.length===0,
+            style:{padding:"16px 38px",fontSize:18,borderRadius:30,border:0,
+              background:C.brown,color:C.cream,boxShadow:"0 4px 14px rgba(44,26,14,.2)"}},
+            "▶ Play concert"),
+          e("p",{style:{color:C.src,fontSize:13,marginTop:14}},
+            "Plays start to finish. Audio advances automatically; video songs you advance yourself."))
+      : e("div",null,
+          /* now playing */
+          e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,
+            borderRadius:12,padding:"20px"}},
+            e("div",{style:{fontSize:12,color:C.src,letterSpacing:"0.06em",
+              textTransform:"uppercase",marginBottom:6}},
+              "Now playing · "+(idx+1)+" of "+songs.length),
+            e("div",{style:{fontSize:22,fontWeight:"bold",color:C.brown}},current.title),
+            current.talk&&e("div",{style:{fontStyle:"italic",color:C.text,marginTop:3}},
+              "from “"+current.talk+"”"+(current.speaker&&current.speaker!=="—"?" · "+current.speaker:"")),
+
+            curVid
+              ? e("div",{style:{position:"relative",paddingBottom:"56.25%",height:0,
+                  borderRadius:8,overflow:"hidden",background:"#000",marginTop:14}},
+                  e("iframe",{src:`https://www.youtube.com/embed/${curVid}?autoplay=1`,
+                    title:current.title,allowFullScreen:true,
+                    allow:"accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture",
+                    style:{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}}))
+              : current.audioUrl
+                ? e("audio",{ref:audioRef,controls:true,style:{width:"100%",marginTop:14},
+                    onEnded:next})
+                : e("div",{style:{padding:"20px",textAlign:"center",color:C.src,
+                    fontStyle:"italic",marginTop:14}},"(No media for this song yet)")),
+
+          /* transport */
+          e("div",{style:{display:"flex",gap:10,justifyContent:"center",
+            alignItems:"center",marginTop:18,flexWrap:"wrap"}},
+            e("button",{onClick:prev,disabled:idx===0,
+              style:{padding:"10px 18px",borderRadius:8,border:`1.5px solid ${C.line}`,
+                background:"#fff",color:idx===0?"#CFC2A2":C.text}},"⏮ Prev"),
+            e("button",{onClick:next,disabled:idx>=songs.length-1,
+              style:{padding:"10px 22px",borderRadius:8,border:0,
+                background:idx>=songs.length-1?"#8A7A5A":C.brown,color:C.cream}},
+              idx>=songs.length-1?"Last song":"Next ⏭")),
+          (curVid)&&e("p",{style:{textAlign:"center",color:C.src,fontSize:13,marginTop:10}},
+            "Press Next when the video finishes to continue the concert."),
+
+          /* upcoming */
+          e("div",{style:{marginTop:24}},
+            e("div",{style:{fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase",
+              color:C.src,marginBottom:8}},"Set list"),
+            e("div",{style:{display:"flex",flexDirection:"column",gap:4}},
+              songs.map((s,i)=>e("button",{key:s.id+i,onClick:()=>setIdx(i),
+                style:{display:"flex",gap:10,alignItems:"center",textAlign:"left",
+                  padding:"8px 12px",borderRadius:8,border:0,cursor:"pointer",
+                  background:i===idx?C.gold:"transparent",
+                  color:i===idx?C.brown:C.text}},
+                e("span",{style:{width:18,color:i===idx?C.brown:"#B0A176",
+                  fontWeight:"bold"}},i+1),
+                e("span",{style:{fontWeight:i===idx?"bold":"normal"}},s.title)))))),
+
+    e("div",{style:{textAlign:"center",marginTop:30}},
+      e("button",{onClick:back,style:{padding:"9px 18px",fontSize:13,borderRadius:8,
+        border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
+        "← Back to the library")),
+  );
+}
+
+/* --------------------------------------------------------------- App */
+function App(){
+  const concertId=new URLSearchParams(location.search).get("concert");
+  const [tab,setTab]=useState("library");
+  const [songs,setSongs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState("");
+  async function load(){
+    setLoading(true);setError("");
+    try{
+      const r=await fetch(`${API}/data`);
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not load");
+      setSongs(d.songs||[]);
+    }catch(err){setError("Couldn't load the library. "+err.message);}
+    finally{setLoading(false);}
+  }
+  useEffect(()=>{ if(!concertId) load(); },[]);
+
+  // Shared concert link: skip the tabbed UI, go straight to playback.
+  if(concertId)return e("div",null,
+    e(Header,{tab:"_concert",setTab:()=>{}}),
+    e(ConcertPlayer,{id:concertId}),
+    e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
+      borderTop:`1px solid ${C.line}`,background:C.paper}},
+      "Conference as a Concert · Y-Mountain Music Co."),
+  );
+
+  return e("div",null,
+    e(Header,{tab,setTab}),
+    tab==="library"&&e(Library,{songs,loading,error}),
+    tab==="concert"&&e(ConcertBuilder,{songs,loading}),
+    tab==="suggest"&&e(Suggest),
+    tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();}}),
+    e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
+      borderTop:`1px solid ${C.line}`,background:C.paper}},
+      "Conference as a Concert · Y-Mountain Music Co."),
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+</script>
+</body>
+</html>
