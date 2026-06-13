@@ -395,25 +395,48 @@ function Band({onAdded}){
     setFile(f);setMsg("");if(state==="error")setState("idle");
     if(!s.title){const base=f.name.replace(/\.[^.]+$/,"");setS(v=>({...v,title:base}));}
   }
-  function fileToB64(f){return new Promise((res,rej)=>{
-    const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);
-    r.onerror=()=>rej(new Error("Could not read the file"));r.readAsDataURL(f);});}
+  // Read an audio file's duration (seconds) in the browser before saving.
+  function readDuration(f){return new Promise((res)=>{
+    try{
+      const url=URL.createObjectURL(f); const a=new Audio();
+      a.preload="metadata";
+      a.addEventListener("loadedmetadata",()=>{const d=isFinite(a.duration)?Math.round(a.duration):0;
+        URL.revokeObjectURL(url);res(d);},{once:true});
+      a.addEventListener("error",()=>{URL.revokeObjectURL(url);res(0);},{once:true});
+      a.src=url;
+    }catch(_){res(0);}
+  });}
 
   async function submit(){
     if(!pw){setState("error");setMsg("Enter the band password.");return;}
     if(!s.title.trim()){setState("error");setMsg("Give the song a title.");return;}
     if(!file&&!s.youtube&&!s.talkUrl){setState("error");
       setMsg("Add an MP3 or at least a YouTube link.");return;}
-    setState("sending");setMsg("Uploading…");
+    setState("sending");setMsg(file?"Uploading…":"Saving…");
     try{
-      const payload={song:s};
-      if(file){payload.filename=file.name;payload.contentType=file.type||"audio/mpeg";
-        payload.dataBase64=await fileToB64(file);}
-      const r=await fetch(`${API}/upload`,{method:"POST",
+      const song={...s};
+      if(file){
+        // 1) ask the function for a presigned URL
+        const ct=file.type||"audio/mpeg";
+        const signRes=await fetch(`${API}/upload`,{method:"POST",
+          headers:{"Content-Type":"application/json","x-upload-password":pw},
+          body:JSON.stringify({action:"sign",filename:file.name,contentType:ct,titleHint:s.title})});
+        const signData=await signRes.json();
+        if(!signRes.ok)throw new Error(signData.error||"Could not start upload");
+        // 2) upload the file bytes straight to R2 (bypasses Netlify size limit)
+        const putRes=await fetch(signData.uploadUrl,{method:"PUT",
+          headers:{"Content-Type":ct},body:file});
+        if(!putRes.ok)throw new Error("File upload to storage failed ("+putRes.status+")");
+        song.audioUrl=signData.publicUrl;
+        // capture duration if the band didn't type one
+        if(!s.duration){const dur=await readDuration(file); if(dur)song.duration=String(dur);}
+      }
+      // 3) save the song into the catalog
+      const saveRes=await fetch(`${API}/upload`,{method:"POST",
         headers:{"Content-Type":"application/json","x-upload-password":pw},
-        body:JSON.stringify(payload)});
-      const d=await r.json();
-      if(!r.ok)throw new Error(d.error||"Upload failed");
+        body:JSON.stringify({action:"save",song})});
+      const d=await saveRes.json();
+      if(!saveRes.ok)throw new Error(d.error||"Could not save song");
       sessionStorage.setItem("cac_pw",pw);
       setState("done");setMsg("");setFile(null);
       setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",blurb:""});

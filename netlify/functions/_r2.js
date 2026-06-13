@@ -3,6 +3,7 @@
 const {
   S3Client, PutObjectCommand, GetObjectCommand,
 } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
 const ACCESS_KEY = process.env.R2_ACCESS_KEY_ID;
@@ -56,6 +57,17 @@ async function putObject(key, body, contentType) {
   return `${PUBLIC_BASE}/${key}`;
 }
 
+// Create a short-lived URL the browser can PUT a file to directly.
+// Returns { uploadUrl, publicUrl }.
+async function presignPut(key, contentType, expiresIn = 600) {
+  const cmd = new PutObjectCommand({
+    Bucket: BUCKET, Key: key, ContentType: contentType,
+    CacheControl: "public, max-age=31536000",
+  });
+  const uploadUrl = await getSignedUrl(client, cmd, { expiresIn });
+  return { uploadUrl, publicUrl: `${PUBLIC_BASE}/${key}` };
+}
+
 const json = (statusCode, obj) => ({
   statusCode,
   headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -65,5 +77,5 @@ const json = (statusCode, obj) => ({
 module.exports = {
   client, BUCKET, PUBLIC_BASE,
   CATALOG_KEY, SUGGESTIONS_KEY,
-  getJSON, putJSON, putObject, json,
+  getJSON, putJSON, putObject, presignPut, json,
 };
