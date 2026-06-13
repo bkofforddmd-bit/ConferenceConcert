@@ -72,5 +72,55 @@ exports.handler = async (event) => {
     }
   }
 
+  // ---- 3) Update an existing song in the catalog ----
+  if (action === "update") {
+    const song = body.song || {};
+    const id = clip(song.id, 120);
+    if (!id) return json(400, { error: "Missing song id" });
+    try {
+      const catalog = await getJSON(CATALOG_KEY, { songs: [] });
+      const songs = catalog.songs || [];
+      const i = songs.findIndex((x) => x.id === id);
+      if (i < 0) return json(404, { error: "Song not found" });
+      const cur = songs[i];
+      songs[i] = {
+        ...cur,
+        title:   clip(song.title, 160) || cur.title,
+        talk:    clip(song.talk, 200),
+        speaker: clip(song.speaker, 120),
+        session: clip(song.session, 80),
+        theme:   clip(song.theme, 80),
+        style:   clip(song.style, 120),
+        talkUrl: clip(song.talkUrl, 500),
+        youtube: clip(song.youtube, 200),
+        audioUrl: clip(song.audioUrl, 500) || cur.audioUrl,
+        previewStart: Math.max(0, Math.min(3600, parseInt(song.previewStart, 10) || 0)),
+        duration: Math.max(0, Math.min(3600, parseInt(song.duration, 10) || 0)),
+        lyrics:  clip(song.lyrics, 8000),
+        blurb:   clip(song.blurb, 400),
+        updatedAt: new Date().toISOString(),
+      };
+      catalog.songs = songs;
+      await putJSON(CATALOG_KEY, catalog);
+      return json(200, { ok: true, entry: songs[i] });
+    } catch (err) {
+      return json(500, { error: "Could not update song", detail: String(err.message || err) });
+    }
+  }
+
+  // ---- 4) Delete a song from the catalog ----
+  if (action === "delete") {
+    const id = clip(body.id, 120);
+    if (!id) return json(400, { error: "Missing song id" });
+    try {
+      const catalog = await getJSON(CATALOG_KEY, { songs: [] });
+      catalog.songs = (catalog.songs || []).filter((x) => x.id !== id);
+      await putJSON(CATALOG_KEY, catalog);
+      return json(200, { ok: true });
+    } catch (err) {
+      return json(500, { error: "Could not delete song", detail: String(err.message || err) });
+    }
+  }
+
   return json(400, { error: "Unknown action" });
 };

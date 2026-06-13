@@ -216,7 +216,8 @@ function RowLinks({song}){
 }
 
 /* --------------------------------------------------------- Song card */
-function SongCard({song,open,onToggle}){
+function SongCard({song,open,onToggle,canEdit,onEdited}){
+  const [editing,setEditing]=useState(false);
   const vid=ytId(song.youtube);
   const badge=vid?"▶ Video":(song.audioUrl?"♪ Audio":"Coming soon");
   const badgeColor=vid?C.blue:(song.audioUrl?C.src:"#9A8A6A");
@@ -237,15 +238,25 @@ function SongCard({song,open,onToggle}){
         song.blurb&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:6,lineHeight:1.5}},song.blurb)),
       e("span",{"aria-hidden":true,style:{fontSize:20,color:C.gold,
         transform:open?"rotate(180deg)":"none",transition:"transform .2s",marginTop:2}},"⌄")),
-    open&&e(Player,{song}),
+    open&&!editing&&e("div",null,
+      e(Player,{song}),
+      canEdit&&e("div",{style:{padding:"0 20px 16px"}},
+        e("button",{onClick:()=>setEditing(true),
+          style:{padding:"7px 16px",fontSize:13,borderRadius:8,
+            border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
+          "✎ Edit this song"))),
+    open&&editing&&e(SongEditor,{song,
+      onDone:(updated)=>{setEditing(false);if(updated)onEdited&&onEdited();},
+    }),
   );
 }
 
 /* ---------------------------------------------------------- Library */
-function Library({songs,loading,error}){
+function Library({songs,loading,error,onReload}){
   const [group,setGroup]=useState("session");
   const [query,setQuery]=useState("");
   const [openId,setOpenId]=useState(null);
+  const canEdit=!!sessionStorage.getItem("cac_pw");
   const filtered=useMemo(()=>{
     const q=query.trim().toLowerCase();
     if(!q)return songs;
@@ -277,6 +288,9 @@ function Library({songs,loading,error}){
           borderRadius:8,border:`1.5px solid ${C.line}`,background:C.paper,color:C.text}})),
     loading&&e("p",{style:{textAlign:"center",color:C.src,padding:"40px 0",fontStyle:"italic"}},
       "Loading the library…"),
+    canEdit&&!loading&&e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,
+      borderRadius:8,padding:"8px 14px",margin:"4px 0 14px",fontSize:13,color:C.src}},
+      "Band mode is on — open any song to edit its details."),
     error&&e("p",{style:{textAlign:"center",color:"#9B2D20",padding:"20px 0"}},error),
     !loading&&!error&&filtered.length===0&&e("p",{style:{textAlign:"center",color:C.src,
       fontStyle:"italic",padding:"40px 0"}},
@@ -287,6 +301,7 @@ function Library({songs,loading,error}){
         g.name,e("span",{style:{color:"#B0A176",marginLeft:8,fontSize:13}},g.items.length)),
       e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
         g.items.map(s=>e(SongCard,{key:s.id,song:s,open:openId===s.id,
+          canEdit,onEdited:onReload,
           onToggle:()=>setOpenId(openId===s.id?null:s.id)}))))),
   );
 }
@@ -295,6 +310,97 @@ function Library({songs,loading,error}){
 const field={padding:"10px 12px",fontSize:15,borderRadius:8,
   border:`1.5px solid ${C.line}`,background:"#fff",color:C.text,width:"100%"};
 const lbl={fontSize:13,color:C.src,marginBottom:5,display:"block",letterSpacing:"0.03em"};
+
+/* ------------------------------------------------- Song editor (band) */
+function SongEditor({song,onDone}){
+  const [f,setF]=useState({
+    title:song.title||"",talk:song.talk||"",speaker:song.speaker||"",
+    session:song.session||"",theme:song.theme||"",style:song.style||"",
+    talkUrl:song.talkUrl||"",youtube:song.youtube||"",
+    previewStart:song.previewStart?String(song.previewStart):"",
+    duration:song.duration?String(song.duration):"",
+    lyrics:song.lyrics||"",blurb:song.blurb||"",
+  });
+  const [state,setState]=useState("idle");
+  const [msg,setMsg]=useState("");
+  const up=(k)=>(ev)=>setF({...f,[k]:ev.target.value});
+  const pw=sessionStorage.getItem("cac_pw")||"";
+
+  async function save(){
+    setState("saving");setMsg("");
+    try{
+      const r=await fetch(`${API}/upload`,{method:"POST",
+        headers:{"Content-Type":"application/json","x-upload-password":pw},
+        body:JSON.stringify({action:"update",song:{...f,id:song.id}})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not save");
+      setState("done");onDone&&onDone(true);
+    }catch(err){setState("error");setMsg(err.message);}
+  }
+  async function del(){
+    if(!window.confirm("Remove “"+song.title+"” from the library? This can't be undone."))return;
+    setState("saving");setMsg("");
+    try{
+      const r=await fetch(`${API}/upload`,{method:"POST",
+        headers:{"Content-Type":"application/json","x-upload-password":pw},
+        body:JSON.stringify({action:"delete",id:song.id})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not delete");
+      onDone&&onDone(true);
+    }catch(err){setState("error");setMsg(err.message);}
+  }
+
+  const half={flex:"1 1 150px"};
+  return e("div",{style:{background:C.paper,borderTop:`4px solid ${C.gold}`,
+    padding:"18px 20px 22px"}},
+    e("div",{style:{fontSize:12,letterSpacing:"0.06em",textTransform:"uppercase",
+      color:C.src,marginBottom:12}},"Editing song"),
+    e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+      e("div",null,e("label",{style:lbl},"Title"),
+        e("input",{style:field,value:f.title,onChange:up("title")})),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 240px"}},e("label",{style:lbl},"Source talk"),
+          e("input",{style:field,value:f.talk,onChange:up("talk")})),
+        e("div",{style:{flex:"1 1 160px"}},e("label",{style:lbl},"Speaker"),
+          e("input",{style:field,value:f.speaker,onChange:up("speaker")}))),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",half,e("label",{style:lbl},"Session"),
+          e("input",{style:field,value:f.session,onChange:up("session")})),
+        e("div",half,e("label",{style:lbl},"Theme"),
+          e("input",{style:field,value:f.theme,onChange:up("theme")})),
+        e("div",half,e("label",{style:lbl},"Style"),
+          e("input",{style:field,value:f.style,onChange:up("style")}))),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",half,e("label",{style:lbl},"Preview start (sec)"),
+          e("input",{type:"number",min:"0",style:field,value:f.previewStart,onChange:up("previewStart")})),
+        e("div",half,e("label",{style:lbl},"Length (sec)"),
+          e("input",{type:"number",min:"0",style:field,value:f.duration,onChange:up("duration")}))),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 240px"}},e("label",{style:lbl},"Talk URL"),
+          e("input",{style:field,value:f.talkUrl,onChange:up("talkUrl")})),
+        e("div",{style:{flex:"1 1 200px"}},e("label",{style:lbl},"YouTube URL"),
+          e("input",{style:field,value:f.youtube,onChange:up("youtube")}))),
+      e("div",null,e("label",{style:lbl},"Lyrics"),
+        e("textarea",{style:{...field,minHeight:120,resize:"vertical"},value:f.lyrics,onChange:up("lyrics")})),
+      e("div",null,e("label",{style:lbl},"Blurb"),
+        e("textarea",{style:{...field,minHeight:60,resize:"vertical"},value:f.blurb,onChange:up("blurb")})),
+      msg&&e("p",{style:{margin:0,color:"#9B2D20"}},msg),
+      e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}},
+        e("button",{onClick:save,disabled:state==="saving",
+          style:{padding:"10px 22px",fontSize:14,borderRadius:8,border:0,
+            background:state==="saving"?"#8A7A5A":C.brown,color:C.cream}},
+          state==="saving"?"Saving…":"Save changes"),
+        e("button",{onClick:()=>onDone&&onDone(false),
+          style:{padding:"10px 18px",fontSize:14,borderRadius:8,
+            border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},"Cancel"),
+        e("button",{onClick:del,
+          style:{padding:"10px 16px",fontSize:13,borderRadius:8,marginLeft:"auto",
+            border:`1.5px solid #C99`,background:"transparent",color:"#9B2D20"}},
+          "Delete song")),
+      e("p",{style:{fontSize:12,color:C.src,margin:"4px 0 0"}},
+        "Note: this edits the song's details. The audio file itself stays as-is; to swap the MP3, add a new song.")),
+  );
+}
 
 function Suggest(){
   const [f,setF]=useState({talk:"",speaker:"",session:"",note:"",from:""});
@@ -354,6 +460,7 @@ function Suggest(){
 /* ------------------------------------------------------- Band upload */
 function Band({onAdded}){
   const [pw,setPw]=useState(sessionStorage.getItem("cac_pw")||"");
+  const [showPw,setShowPw]=useState(false);
   const [file,setFile]=useState(null);
   const [drag,setDrag]=useState(false);
   const [s,setS]=useState({title:"",talk:"",speaker:"",session:"",theme:"",
@@ -364,6 +471,32 @@ function Band({onAdded}){
   const [gdocState,setGdocState]=useState("idle"); // idle|loading|preview|error
   const [gdocMsg,setGdocMsg]=useState("");
   const [gdocPreview,setGdocPreview]=useState(""); // fetched text, awaiting confirmation
+  const [projMsg,setProjMsg]=useState("");
+
+  // Import everything from a music-video-studio project JSON.
+  function importProject(f){
+    if(!f)return;
+    setProjMsg("Reading project file…");
+    const r=new FileReader();
+    r.onload=()=>{
+      try{
+        const d=JSON.parse(String(r.result));
+        const meta=(d.scene&&d.scene.meta)||{};
+        const next={...s};
+        if(meta.songTitle)next.title=meta.songTitle;
+        if(meta.speaker)next.speaker=meta.speaker;
+        if(meta.conferenceMonthYear)next.session=meta.conferenceMonthYear;
+        if(d.styleReference)next.style="after "+d.styleReference;
+        const lyr=d.finalLyrics||d.lyrics;
+        if(lyr)next.lyrics=lyr;
+        if(meta.session&&!next.blurb)next.blurb=meta.session;
+        setS(next);
+        setProjMsg("Filled in from project file — review the fields, then add the MP3 and save.");
+      }catch(err){setProjMsg("Couldn't read that file — make sure it's a project .json export.");}
+    };
+    r.onerror=()=>setProjMsg("Couldn't read that file.");
+    r.readAsText(f);
+  }
   const up=(k)=>(ev)=>setS({...s,[k]:ev.target.value});
 
   async function importGdoc(){
@@ -440,7 +573,7 @@ function Band({onAdded}){
       sessionStorage.setItem("cac_pw",pw);
       setState("done");setMsg("");setFile(null);
       setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",blurb:""});
-      setGdocUrl("");setGdocState("idle");setGdocMsg("");setGdocPreview("");
+      setGdocUrl("");setGdocState("idle");setGdocMsg("");setGdocPreview("");setProjMsg("");
       onAdded&&onAdded(d.entry);
     }catch(err){setState("error");setMsg(err.message);}
   }
@@ -449,8 +582,28 @@ function Band({onAdded}){
     e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
       "Band members only. Drop an MP3, add the talk details, and the song goes live for everyone."),
     e("div",null,e("label",{style:lbl,htmlFor:"b-pw"},"Band password"),
-      e("input",{id:"b-pw",type:"password",style:{...field,maxWidth:260},value:pw,
-        onChange:ev=>setPw(ev.target.value),placeholder:"••••••••"})),
+      e("div",{style:{display:"flex",gap:8,alignItems:"center",maxWidth:320}},
+        e("input",{id:"b-pw",type:showPw?"text":"password",style:{...field,maxWidth:260},value:pw,
+          onChange:ev=>setPw(ev.target.value),placeholder:"••••••••"}),
+        e("button",{type:"button",onClick:()=>setShowPw(!showPw),
+          "aria-label":showPw?"Hide password":"Show password",
+          style:{padding:"8px 12px",fontSize:13,borderRadius:8,
+            border:`1.5px solid ${C.line}`,background:"transparent",color:C.src,
+            whiteSpace:"nowrap"}},showPw?"Hide":"Show")),
+      pw&&e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
+        "Length: "+pw.length+" characters"+(/^\s|\s$/.test(pw)?" — ⚠ starts or ends with a space":""))),
+    e("div",{style:{marginTop:18,border:`1.5px solid ${C.gold}`,borderRadius:12,
+      background:C.paper,padding:"16px 18px"}},
+      e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:4}},
+        "Quick fill from a project file"),
+      e("p",{style:{fontSize:13,color:C.src,lineHeight:1.5,margin:"0 0 10px"}},
+        "Have a music-video-studio project export (.json)? Drop it here to auto-fill the title, speaker, session, style, and lyrics — then just add the MP3 below."),
+      e("label",{style:{display:"inline-block",padding:"8px 16px",fontSize:14,
+        borderRadius:8,background:C.blue,color:"#fff",cursor:"pointer"}},
+        "Choose project .json",
+        e("input",{type:"file",accept:".json,application/json",
+          onChange:ev=>importProject(ev.target.files[0]),style:{display:"none"}})),
+      projMsg&&e("div",{style:{fontSize:13,color:C.src,marginTop:8}},projMsg)),
     e("div",{onDragOver:ev=>{ev.preventDefault();setDrag(true);},
       onDragLeave:()=>setDrag(false),
       onDrop:ev=>{ev.preventDefault();setDrag(false);pick(ev.dataTransfer.files[0]);},
@@ -947,7 +1100,7 @@ function App(){
 
   return e("div",null,
     e(Header,{tab,setTab}),
-    tab==="library"&&e(Library,{songs,loading,error}),
+    tab==="library"&&e(Library,{songs,loading,error,onReload:load}),
     tab==="concert"&&e(ConcertBuilder,{songs,loading}),
     tab==="suggest"&&e(Suggest),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();}}),
