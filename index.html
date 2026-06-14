@@ -246,10 +246,11 @@ function Header({tab,setTab,bandVersion}){
 /* --------------------------------------------- Scrolling lyrics panel */
 /* Follows an <audio> element's progress and scrolls the lyrics so the current
    point in the song stays centered. Falls back gracefully if no duration yet. */
-function ScrollingLyrics({audioRef,lyrics,height,delay}){
+function ScrollingLyrics({audioRef,lyrics,height,delay,endBuffer}){
   const boxRef=React.useRef(null);
   const innerRef=React.useRef(null);
-  const lead=(delay==null?35:Math.max(0,delay)); // seconds to hold before scrolling
+  const lead=(delay==null?35:Math.max(0,delay));        // seconds to hold before scrolling
+  const tailSecs=(endBuffer==null?20:Math.max(0,endBuffer)); // finish this many seconds before the end
   useEffect(()=>{
     if(!lyrics)return;
     let raf;
@@ -257,9 +258,10 @@ function ScrollingLyrics({audioRef,lyrics,height,delay}){
       const a=audioRef&&audioRef.current, box=boxRef.current, inner=innerRef.current;
       if(a&&box&&inner&&a.duration&&isFinite(a.duration)&&a.duration>0){
         const dur=a.duration;
-        // Hold still through the lead-in, then scroll over the remaining time so
-        // the lyrics still finish as the song ends.
-        const span=Math.max(1,dur-lead);
+        // Scroll across the window from the lead-in to (end - tail), so the last
+        // lyric lands ~tailSecs before the audio finishes instead of at the very end.
+        const endAt=Math.max(lead+1,dur-tailSecs);
+        const span=Math.max(1,endAt-lead);
         const frac=Math.min(1,Math.max(0,(a.currentTime-lead)/span));
         const scrollable=Math.max(0,inner.scrollHeight-box.clientHeight);
         box.scrollTop=scrollable*frac;
@@ -268,7 +270,7 @@ function ScrollingLyrics({audioRef,lyrics,height,delay}){
     };
     raf=requestAnimationFrame(tick);
     return ()=>cancelAnimationFrame(raf);
-  },[lyrics,audioRef,lead]);
+  },[lyrics,audioRef,lead,tailSecs]);
   if(!lyrics)return null;
   return e("div",{ref:boxRef,style:{maxHeight:height||220,overflow:"hidden",
     borderRadius:8,background:C.cream,border:`1px solid ${C.line}`,
@@ -303,7 +305,8 @@ function Player({song}){
     mode==="audio"&&hasAudio&&e("div",{style:{padding:"6px 0"}},
       e("audio",{ref:audioRef,controls:true,preload:"none",src:song.audioUrl,style:{width:"100%"}}),
       song.lyrics&&e(ScrollingLyrics,{audioRef,lyrics:song.lyrics,
-        delay:song.lyricsDelay==null?35:song.lyricsDelay})),
+        delay:song.lyricsDelay==null?35:song.lyricsDelay,
+        endBuffer:song.lyricsEnd==null?20:song.lyricsEnd})),
     mode==="none"&&e("div",{style:{padding:"26px 16px",textAlign:"center",color:C.src,
       background:C.cream,borderRadius:8,fontStyle:"italic"}},
       "This song isn't streaming yet — check back soon."),
@@ -502,6 +505,7 @@ function SongEditor({song,onDone}){
     previewStart:song.previewStart?String(song.previewStart):"",
     duration:song.duration?String(song.duration):"",
     lyricsDelay:song.lyricsDelay==null?"":String(song.lyricsDelay),
+    lyricsEnd:song.lyricsEnd==null?"":String(song.lyricsEnd),
     lyrics:song.lyrics||"",blurb:song.blurb||"",
   });
   const [state,setState]=useState("idle");
@@ -560,7 +564,10 @@ function SongEditor({song,onDone}){
           e("input",{type:"number",min:"0",style:field,value:f.duration,onChange:up("duration")})),
         e("div",half,e("label",{style:lbl},"Lyrics delay (sec)"),
           e("input",{type:"number",min:"0",style:field,value:f.lyricsDelay,onChange:up("lyricsDelay"),
-            placeholder:"35"}))),
+            placeholder:"35"})),
+        e("div",half,e("label",{style:lbl},"Lyrics finish early (sec)"),
+          e("input",{type:"number",min:"0",style:field,value:f.lyricsEnd,onChange:up("lyricsEnd"),
+            placeholder:"20"}))),
       e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
         e("div",{style:{flex:"1 1 240px"}},e("label",{style:lbl},"Talk URL"),
           e("input",{style:field,value:f.talkUrl,onChange:up("talkUrl")})),
@@ -920,7 +927,7 @@ function Band({onAdded,onBandChange}){
   const [file,setFile]=useState(null);
   const [drag,setDrag]=useState(false);
   const [s,setS]=useState({title:"",talk:"",speaker:"",session:"",theme:"",
-    style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",lyricsDelay:"",blurb:""});
+    style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",lyricsDelay:"",lyricsEnd:"",blurb:""});
   const [state,setState]=useState("idle");
   const [msg,setMsg]=useState("");
   const [gdocUrl,setGdocUrl]=useState("");
@@ -1029,7 +1036,7 @@ function Band({onAdded,onBandChange}){
       sessionStorage.setItem("cac_pw",pw);
       setBandOn(true);onBandChange&&onBandChange();
       setState("done");setMsg("");setFile(null);
-      setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",lyricsDelay:"",blurb:""});
+      setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",lyricsDelay:"",lyricsEnd:"",blurb:""});
       setGdocUrl("");setGdocState("idle");setGdocMsg("");setGdocPreview("");setProjMsg("");
       onAdded&&onAdded(d.entry);
     }catch(err){setState("error");setMsg(err.message);}
@@ -1159,10 +1166,15 @@ function Band({onAdded,onBandChange}){
         e("textarea",{id:"b-lyrics",style:{...field,minHeight:140,resize:"vertical"},
           value:s.lyrics,onChange:up("lyrics"),
           placeholder:"Paste the full lyrics here. Line breaks are kept."})),
-      e("div",{style:{maxWidth:300}},
-        e("label",{style:lbl,htmlFor:"b-lyrdelay"},"Lyrics start delay (seconds)"),
-        e("input",{id:"b-lyrdelay",type:"number",min:"0",style:field,value:s.lyricsDelay,
-          onChange:up("lyricsDelay"),placeholder:"35 — how long before the lyrics scroll"})),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap",maxWidth:520}},
+        e("div",{style:{flex:"1 1 200px"}},
+          e("label",{style:lbl,htmlFor:"b-lyrdelay"},"Lyrics start delay (seconds)"),
+          e("input",{id:"b-lyrdelay",type:"number",min:"0",style:field,value:s.lyricsDelay,
+            onChange:up("lyricsDelay"),placeholder:"35 — wait before scrolling"})),
+        e("div",{style:{flex:"1 1 200px"}},
+          e("label",{style:lbl,htmlFor:"b-lyrend"},"Finish before end (seconds)"),
+          e("input",{id:"b-lyrend",type:"number",min:"0",style:field,value:s.lyricsEnd,
+            onChange:up("lyricsEnd"),placeholder:"20 — end this early"}))),
       e("div",null,e("label",{style:lbl,htmlFor:"b-blurb"},"Blurb"),
         e("textarea",{id:"b-blurb",style:{...field,minHeight:70,resize:"vertical"},
           value:s.blurb,onChange:up("blurb"),placeholder:"One line about the song."})),
@@ -1589,7 +1601,8 @@ function ConcertPlayer({id}){
                     e("audio",{ref:audioRef,controls:true,style:{width:"100%",marginTop:14},
                       onEnded:next}),
                     current.lyrics&&e(ScrollingLyrics,{audioRef,lyrics:current.lyrics,height:240,
-                      delay:current.lyricsDelay==null?35:current.lyricsDelay}))
+                      delay:current.lyricsDelay==null?35:current.lyricsDelay,
+                      endBuffer:current.lyricsEnd==null?20:current.lyricsEnd}))
                 : e("div",{style:{padding:"20px",textAlign:"center",color:C.src,
                     fontStyle:"italic",marginTop:14}},"(No media for this song yet)")),
 

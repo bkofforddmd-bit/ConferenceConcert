@@ -64,6 +64,7 @@ exports.handler = async (event) => {
       duration: Math.max(0, Math.min(3600, parseInt(song.duration, 10) || 0)),
       lyrics:  clip(song.lyrics, 8000),
       lyricsDelay: (song.lyricsDelay===""||song.lyricsDelay==null)?35:Math.max(0,Math.min(120,parseInt(song.lyricsDelay,10)||0)),
+      lyricsEnd: (song.lyricsEnd===""||song.lyricsEnd==null)?20:Math.max(0,Math.min(120,parseInt(song.lyricsEnd,10)||0)),
       blurb:   clip(song.blurb, 400),
       addedAt: new Date().toISOString(),
     };
@@ -105,6 +106,7 @@ exports.handler = async (event) => {
         duration: Math.max(0, Math.min(3600, parseInt(song.duration, 10) || 0)),
         lyrics:  clip(song.lyrics, 8000),
       lyricsDelay: (song.lyricsDelay===""||song.lyricsDelay==null)?35:Math.max(0,Math.min(120,parseInt(song.lyricsDelay,10)||0)),
+      lyricsEnd: (song.lyricsEnd===""||song.lyricsEnd==null)?20:Math.max(0,Math.min(120,parseInt(song.lyricsEnd,10)||0)),
         blurb:   clip(song.blurb, 400),
         updatedAt: new Date().toISOString(),
       };
