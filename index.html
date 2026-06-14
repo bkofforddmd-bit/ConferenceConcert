@@ -8,8 +8,8 @@
 <link rel="apple-touch-icon" href="icon.png" />
 <style>
   :root{
-    --brown:#2C1A0E; --gold:#C8A450; --cream:#F7F0E0; --text:#1A1008;
-    --blue:#2A5F8A; --src:#5A3800; --paper:#FBF6EA; --line:#E2D4B4;
+    --brown:#13294B; --gold:#F2C14E; --cream:#0A1628; --text:#EAF0FA;
+    --blue:#4F9BE8; --src:#9FB4D4; --paper:#162A4A; --line:#2C467A;
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
@@ -30,8 +30,8 @@
 <script>
 const { useState, useMemo, useEffect } = React;
 const e = React.createElement;
-const C = {brown:"#2C1A0E",gold:"#C8A450",cream:"#F7F0E0",text:"#1A1008",
-  blue:"#2A5F8A",src:"#5A3800",paper:"#FBF6EA",line:"#E2D4B4"};
+const C = {brown:"#13294B",gold:"#F2C14E",cream:"#0A1628",text:"#EAF0FA",
+  blue:"#4F9BE8",src:"#9FB4D4",paper:"#162A4A",line:"#2C467A"};
 
 const API = "/.netlify/functions";
 const GROUPINGS = [
@@ -124,7 +124,9 @@ function Header({tab,setTab}){
       tabs.map(([k,label])=>e("button",{key:k,onClick:()=>setTab(k),
         "aria-current":tab===k,
         style:{padding:"10px 18px",fontSize:14,border:0,borderRadius:"8px 8px 0 0",
-          background:tab===k?C.cream:"transparent",color:tab===k?C.brown:"#E8D9B8",
+          background:tab===k?C.cream:"transparent",
+          color:tab===k?C.gold:"#9FB4D4",
+          borderBottom:tab===k?`3px solid ${C.gold}`:"3px solid transparent",
           fontWeight:tab===k?"bold":"normal",letterSpacing:"0.03em"}},label)),
     ),
   );
@@ -220,8 +222,8 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
   const [editing,setEditing]=useState(false);
   const vid=ytId(song.youtube);
   const badge=vid?"▶ Video":(song.audioUrl?"♪ Audio":"Coming soon");
-  const badgeColor=vid?C.blue:(song.audioUrl?C.src:"#9A8A6A");
-  return e("div",{style:{background:open?C.paper:"#fff",borderRadius:12,
+  const badgeColor=vid?C.blue:(song.audioUrl?C.src:"#6B7FA3");
+  return e("div",{style:{background:open?C.paper:"#1E3358",borderRadius:12,
     border:`1.5px solid ${open?C.gold:C.line}`,
     boxShadow:open?"0 6px 20px rgba(44,26,14,.12)":"0 1px 3px rgba(44,26,14,.06)",
     overflow:"hidden",transition:"border-color .15s,box-shadow .15s"}},
@@ -230,7 +232,7 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
         padding:"16px 18px",display:"flex",gap:14,alignItems:"flex-start"}},
       e("div",{style:{flex:1,minWidth:0}},
         e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-          e("span",{style:{fontSize:19,fontWeight:"bold",color:C.brown}},song.title),
+          e("span",{style:{fontSize:19,fontWeight:"bold",color:C.gold}},song.title),
           e("span",{style:{fontSize:11,color:"#fff",background:badgeColor,
             padding:"2px 9px",borderRadius:12}},badge)),
         song.talk&&e("div",{style:{fontSize:14,color:C.text,marginTop:5,fontStyle:"italic"}},
@@ -279,9 +281,9 @@ function Library({songs,loading,error,onReload}){
         GROUPINGS.map(g=>e("button",{key:g.key,onClick:()=>setGroup(g.key),
           "aria-pressed":group===g.key,
           style:{padding:"7px 14px",fontSize:14,borderRadius:20,
-            border:`1.5px solid ${group===g.key?C.brown:C.line}`,
-            background:group===g.key?C.brown:C.paper,
-            color:group===g.key?C.cream:C.text}},g.label))),
+            border:`1.5px solid ${group===g.key?C.gold:C.line}`,
+            background:group===g.key?C.gold:C.paper,
+            color:group===g.key?"#0A1628":C.text}},g.label))),
       e("input",{type:"search",value:query,onChange:ev=>setQuery(ev.target.value),
         placeholder:"Search title, talk, speaker…","aria-label":"Search songs",
         style:{flex:"1 1 220px",maxWidth:300,padding:"9px 14px",fontSize:15,
@@ -291,14 +293,14 @@ function Library({songs,loading,error,onReload}){
     canEdit&&!loading&&e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,
       borderRadius:8,padding:"8px 14px",margin:"4px 0 14px",fontSize:13,color:C.src}},
       "Band mode is on — open any song to edit its details."),
-    error&&e("p",{style:{textAlign:"center",color:"#9B2D20",padding:"20px 0"}},error),
+    error&&e("p",{style:{textAlign:"center",color:"#E66A5C",padding:"20px 0"}},error),
     !loading&&!error&&filtered.length===0&&e("p",{style:{textAlign:"center",color:C.src,
       fontStyle:"italic",padding:"40px 0"}},
       songs.length===0?"No songs yet — the band will add the first one soon.":"No songs match your search."),
     groups.map((g,gi)=>e("section",{key:g.name||gi,style:{marginTop:gi?34:18}},
       g.name&&e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
         color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,marginBottom:14}},
-        g.name,e("span",{style:{color:"#B0A176",marginLeft:8,fontSize:13}},g.items.length)),
+        g.name,e("span",{style:{color:"#7E97BD",marginLeft:8,fontSize:13}},g.items.length)),
       e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
         g.items.map(s=>e(SongCard,{key:s.id,song:s,open:openId===s.id,
           canEdit,onEdited:onReload,
@@ -308,7 +310,7 @@ function Library({songs,loading,error,onReload}){
 
 /* ---------------------------------------------------- Suggest form */
 const field={padding:"10px 12px",fontSize:15,borderRadius:8,
-  border:`1.5px solid ${C.line}`,background:"#fff",color:C.text,width:"100%"};
+  border:`1.5px solid ${C.line}`,background:"#1E3358",color:C.text,width:"100%"};
 const lbl={fontSize:13,color:C.src,marginBottom:5,display:"block",letterSpacing:"0.03em"};
 
 /* ------------------------------------------------- Song editor (band) */
@@ -384,18 +386,18 @@ function SongEditor({song,onDone}){
         e("textarea",{style:{...field,minHeight:120,resize:"vertical"},value:f.lyrics,onChange:up("lyrics")})),
       e("div",null,e("label",{style:lbl},"Blurb"),
         e("textarea",{style:{...field,minHeight:60,resize:"vertical"},value:f.blurb,onChange:up("blurb")})),
-      msg&&e("p",{style:{margin:0,color:"#9B2D20"}},msg),
+      msg&&e("p",{style:{margin:0,color:"#E66A5C"}},msg),
       e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}},
         e("button",{onClick:save,disabled:state==="saving",
           style:{padding:"10px 22px",fontSize:14,borderRadius:8,border:0,
-            background:state==="saving"?"#8A7A5A":C.brown,color:C.cream}},
+            background:state==="saving"?"#3A5582":C.blue,color:"#0A1628"}},
           state==="saving"?"Saving…":"Save changes"),
         e("button",{onClick:()=>onDone&&onDone(false),
           style:{padding:"10px 18px",fontSize:14,borderRadius:8,
             border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},"Cancel"),
         e("button",{onClick:del,
           style:{padding:"10px 16px",fontSize:13,borderRadius:8,marginLeft:"auto",
-            border:`1.5px solid #C99`,background:"transparent",color:"#9B2D20"}},
+            border:`1.5px solid #7A4A48`,background:"transparent",color:"#E66A5C"}},
           "Delete song")),
       e("p",{style:{fontSize:12,color:C.src,margin:"4px 0 0"}},
         "Note: this edits the song's details. The audio file itself stays as-is; to swap the MP3, add a new song.")),
@@ -422,12 +424,12 @@ function Suggest(){
     e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,borderRadius:12,
       padding:"34px 26px",textAlign:"center"}},
       e("div",{style:{fontSize:34,marginBottom:8}},"♪"),
-      e("h2",{style:{margin:"0 0 8px",color:C.brown}},"Thank you!"),
+      e("h2",{style:{margin:"0 0 8px",color:C.gold}},"Thank you!"),
       e("p",{style:{color:C.src,lineHeight:1.6,margin:"0 0 18px"}},
         "Your suggestion is with the band. Maybe it becomes the next song."),
       e("button",{onClick:()=>setState("idle"),
         style:{padding:"10px 22px",fontSize:14,borderRadius:8,border:0,
-          background:C.brown,color:C.cream}},"Suggest another")));
+          background:C.blue,color:"#0A1628"}},"Suggest another")));
   return e("main",{style:{maxWidth:560,margin:"0 auto",padding:"28px 20px 60px"}},
     e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
       "Heard a General Conference talk that should become a song? Tell the band about it."),
@@ -448,10 +450,10 @@ function Suggest(){
           placeholder:"A line, a theme, a moment that moved you…"})),
       e("div",null,e("label",{style:lbl,htmlFor:"s-from"},"Your name (optional)"),
         e("input",{id:"s-from",style:field,value:f.from,onChange:up("from"),placeholder:"So we can thank you"})),
-      state==="error"&&e("p",{style:{color:"#9B2D20",margin:0}},msg),
+      state==="error"&&e("p",{style:{color:"#E66A5C",margin:0}},msg),
       e("button",{onClick:submit,disabled:state==="sending",
         style:{padding:"12px 24px",fontSize:15,borderRadius:8,border:0,
-          background:state==="sending"?"#8A7A5A":C.brown,color:C.cream,
+          background:state==="sending"?"#3A5582":C.blue,color:"#0A1628",
           alignSelf:"flex-start"}},
         state==="sending"?"Sending…":"Send to the band")),
   );
@@ -594,7 +596,7 @@ function Band({onAdded}){
         "Length: "+pw.length+" characters"+(/^\s|\s$/.test(pw)?" — ⚠ starts or ends with a space":""))),
     e("div",{style:{marginTop:18,border:`1.5px solid ${C.gold}`,borderRadius:12,
       background:C.paper,padding:"16px 18px"}},
-      e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:4}},
+      e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:4}},
         "Quick fill from a project file"),
       e("p",{style:{fontSize:13,color:C.src,lineHeight:1.5,margin:"0 0 10px"}},
         "Have a music-video-studio project export (.json)? Drop it here to auto-fill the title, speaker, session, style, and lyrics — then just add the MP3 below."),
@@ -608,15 +610,15 @@ function Band({onAdded}){
       onDragLeave:()=>setDrag(false),
       onDrop:ev=>{ev.preventDefault();setDrag(false);pick(ev.dataTransfer.files[0]);},
       style:{marginTop:18,border:`2.5px dashed ${drag?C.gold:C.line}`,borderRadius:12,
-        background:drag?C.paper:"#fff",padding:"30px 20px",textAlign:"center",
+        background:drag?C.paper:"#1E3358",padding:"30px 20px",textAlign:"center",
         transition:"all .15s"}},
       e("div",{style:{fontSize:30,color:C.gold,marginBottom:6}},"♪"),
-      e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:4}},
+      e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:4}},
         file?file.name:"Drag an MP3 here"),
       e("div",{style:{fontSize:13,color:C.src,marginBottom:12}},
         file?`${(file.size/1048576).toFixed(1)} MB`:"or"),
       e("label",{style:{display:"inline-block",padding:"8px 18px",fontSize:14,
-        borderRadius:8,background:C.brown,color:C.cream,cursor:"pointer"}},
+        borderRadius:8,background:C.blue,color:"#0A1628",cursor:"pointer"}},
         "Choose file",
         e("input",{type:"file",accept:"audio/*,.mp3,.m4a,.wav,.ogg,.aac",
           onChange:ev=>pick(ev.target.files[0]),style:{display:"none"}}))),
@@ -661,7 +663,7 @@ function Band({onAdded}){
             placeholder:"Paste a Google Doc link (shared “anyone with the link”)"}),
           e("button",{onClick:importGdoc,disabled:gdocState==="loading",
             style:{padding:"10px 18px",fontSize:14,borderRadius:8,border:0,whiteSpace:"nowrap",
-              background:gdocState==="loading"?"#8A7A5A":C.blue,color:"#fff"}},
+              background:gdocState==="loading"?"#3A5582":C.blue,color:"#fff"}},
             gdocState==="loading"?"Fetching…":"Import")),
         gdocState==="preview"&&e("div",{style:{marginTop:10,border:`1.5px solid ${C.gold}`,
           borderRadius:10,background:C.paper,padding:"14px 16px"}},
@@ -669,20 +671,20 @@ function Band({onAdded}){
             color:C.src,marginBottom:8}},"Preview — from your Google Doc"),
           e("pre",{style:{whiteSpace:"pre-wrap",fontFamily:"Georgia,serif",fontSize:14,
             lineHeight:1.55,color:C.text,maxHeight:260,overflow:"auto",margin:0,
-            background:"#fff",border:`1px solid ${C.line}`,borderRadius:8,padding:"12px 14px"}},
+            background:"#1E3358",border:`1px solid ${C.line}`,borderRadius:8,padding:"12px 14px"}},
             gdocPreview),
           e("div",{style:{fontSize:12,color:C.src,margin:"8px 0 10px"}},
             gdocPreview.length+" characters · plain text only (formatting from the Doc isn't carried over)"),
           e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
             e("button",{onClick:useImported,
               style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
-                background:C.brown,color:C.cream}},"Use these lyrics"),
+                background:C.blue,color:"#0A1628"}},"Use these lyrics"),
             e("button",{onClick:cancelImport,
               style:{padding:"9px 18px",fontSize:14,borderRadius:8,
                 border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
               "Cancel"))),
         gdocMsg&&e("div",{style:{fontSize:13,marginTop:6,
-          color:gdocState==="error"?"#9B2D20":C.src}},gdocMsg)),
+          color:gdocState==="error"?"#E66A5C":C.src}},gdocMsg)),
       e("div",null,e("label",{style:lbl,htmlFor:"b-lyrics"},"Lyrics (shown in the app)"),
         e("textarea",{id:"b-lyrics",style:{...field,minHeight:140,resize:"vertical"},
           value:s.lyrics,onChange:up("lyrics"),
@@ -690,12 +692,12 @@ function Band({onAdded}){
       e("div",null,e("label",{style:lbl,htmlFor:"b-blurb"},"Blurb"),
         e("textarea",{id:"b-blurb",style:{...field,minHeight:70,resize:"vertical"},
           value:s.blurb,onChange:up("blurb"),placeholder:"One line about the song."})),
-      msg&&e("p",{style:{margin:0,color:state==="error"?"#9B2D20":C.src}},msg),
+      msg&&e("p",{style:{margin:0,color:state==="error"?"#E66A5C":C.src}},msg),
       state==="done"&&e("p",{style:{margin:0,color:C.blue,fontWeight:"bold"}},
         "Added — it's live in the library."),
       e("button",{onClick:submit,disabled:state==="sending",
         style:{padding:"12px 26px",fontSize:15,borderRadius:8,border:0,
-          background:state==="sending"?"#8A7A5A":C.brown,color:C.cream,alignSelf:"flex-start"}},
+          background:state==="sending"?"#3A5582":C.blue,color:"#0A1628",alignSelf:"flex-start"}},
         state==="sending"?"Uploading…":"Add song to library")),
   );
 }
@@ -824,16 +826,16 @@ function ConcertBuilder({songs,loading}){
       border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 12px"}},
     e("div",{style:{display:"flex",flexDirection:"column",gap:2}},
       e("button",{onClick:()=>move(p.id,-1),disabled:i===0,"aria-label":"Move up",
-        style:{border:0,background:"transparent",color:i===0?"#CFC2A2":C.src,
+        style:{border:0,background:"transparent",color:i===0?"#5A78A8":C.src,
           fontSize:14,cursor:i===0?"default":"pointer",lineHeight:1}},"▲"),
       e("button",{onClick:()=>move(p.id,1),disabled:i===pickedSongs.length-1,
         "aria-label":"Move down",
         style:{border:0,background:"transparent",
-          color:i===pickedSongs.length-1?"#CFC2A2":C.src,
+          color:i===pickedSongs.length-1?"#5A78A8":C.src,
           fontSize:14,cursor:i===pickedSongs.length-1?"default":"pointer",lineHeight:1}},"▼")),
     e("span",{style:{color:C.gold,fontWeight:"bold",width:20,textAlign:"right"}},i+1),
     e("div",{style:{flex:1,minWidth:0}},
-      e("div",{style:{fontWeight:"bold",color:C.brown,fontSize:15}},p.song.title),
+      e("div",{style:{fontWeight:"bold",color:C.gold,fontSize:15}},p.song.title),
       e("div",{style:{fontSize:12,color:C.src,fontStyle:"italic",
         overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
         (p.song.talk?p.song.talk+" · ":"")+fmtTime(songSeconds(p.song,measured))
@@ -841,7 +843,7 @@ function ConcertBuilder({songs,loading}){
       e(RowLinks,{song:p.song})),
     e(PreviewButton,{song:p.song,small:true}),
     e("button",{onClick:()=>remove(p.id),"aria-label":"Remove",
-      style:{border:0,background:"transparent",color:"#9B2D20",fontSize:18,lineHeight:1}},"×"));
+      style:{border:0,background:"transparent",color:"#E66A5C",fontSize:18,lineHeight:1}},"×"));
 
   // Picker list (shared by free-add and per-section add).
   const picker=(section)=>e("div",{style:{display:"flex",flexDirection:"column",gap:8,
@@ -850,10 +852,10 @@ function ConcertBuilder({songs,loading}){
       ? e("p",{style:{color:C.src,fontStyle:"italic"}},
           songs.length===0?"No songs in the library yet.":"Nothing left to add.")
       : available.map(s=>e("div",{key:s.id,
-          style:{display:"flex",alignItems:"center",gap:10,background:"#fff",
+          style:{display:"flex",alignItems:"center",gap:10,background:"#1E3358",
             border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 12px"}},
           e("div",{style:{flex:1,minWidth:0}},
-            e("div",{style:{fontWeight:"bold",color:C.brown,fontSize:15}},s.title),
+            e("div",{style:{fontWeight:"bold",color:C.gold,fontSize:15}},s.title),
             e("div",{style:{fontSize:12,color:C.src,fontStyle:"italic",
               overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
               (s.talk?"from “"+s.talk+"” · ":"")+fmtTime(songSeconds(s,measured))
@@ -862,10 +864,10 @@ function ConcertBuilder({songs,loading}){
           e(PreviewButton,{song:s,small:true}),
           e("button",{onClick:()=>add(s.id,section),disabled:atCap,
             style:{padding:"6px 14px",fontSize:13,borderRadius:16,border:0,
-              background:atCap?"#D9CBA8":C.gold,color:C.brown,fontWeight:"bold",
+              background:atCap?"#2C467A":C.gold,color:"#0A1628",fontWeight:"bold",
               whiteSpace:"nowrap",cursor:atCap?"default":"pointer"}},"+ Add"))));
 
-  const timeColor=overCap?"#9B2D20":(atCap?C.src:C.brown);
+  const timeColor=overCap?"#E66A5C":(atCap?C.src:C.gold);
 
   return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"24px 20px 60px"}},
     e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
@@ -873,14 +875,14 @@ function ConcertBuilder({songs,loading}){
 
     /* time meter */
     e("div",{style:{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",
-      background:C.paper,border:`1.5px solid ${overCap?"#9B2D20":C.line}`,
+      background:C.paper,border:`1.5px solid ${overCap?"#E66A5C":C.line}`,
       borderRadius:10,padding:"12px 16px",marginBottom:20}},
       e("div",{style:{fontSize:22,fontWeight:"bold",color:timeColor,minWidth:90}},
         fmtTime(totalSecs)),
       e("div",{style:{flex:1,minWidth:160}},
-        e("div",{style:{height:8,background:"#E8DCC0",borderRadius:5,overflow:"hidden"}},
+        e("div",{style:{height:8,background:"#22375E",borderRadius:5,overflow:"hidden"}},
           e("div",{style:{height:"100%",width:Math.min(100,totalSecs/CONCERT_MAX_SECONDS*100)+"%",
-            background:overCap?"#9B2D20":C.gold,transition:"width .2s"}})),
+            background:overCap?"#E66A5C":C.gold,transition:"width .2s"}})),
         e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
           atCap?"2-hour limit reached — remove a song to add more."
                :"of a 2-hour maximum  ·  "+pickedSongs.length+" songs")),
@@ -893,14 +895,14 @@ function ConcertBuilder({songs,loading}){
         e("div",{style:{display:"flex",justifyContent:"space-between",
           alignItems:"baseline",borderBottom:`2px solid ${C.gold}`,paddingBottom:7}},
           e("h2",{style:{fontSize:14,letterSpacing:"0.12em",textTransform:"uppercase",
-            color:C.brown,margin:0}},"Your set list ",
-            e("span",{style:{color:"#B0A176"}},"("+pickedSongs.length+")"))),
+            color:C.gold,margin:0}},"Your set list ",
+            e("span",{style:{color:"#7E97BD"}},"("+pickedSongs.length+")"))),
         e("input",{value:name,onChange:ev=>setName(ev.target.value),
           placeholder:"Name your concert…",style:{...field,margin:"14px 0"}}),
 
-        !useArc&&picked.length===0&&e("div",{style:{background:"#fff",
+        !useArc&&picked.length===0&&e("div",{style:{background:"#1E3358",
           border:`1.5px dashed ${C.gold}`,borderRadius:12,padding:"18px",marginBottom:14}},
-          e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:4}},
+          e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:4}},
             "Not sure where to start?"),
           e("p",{style:{fontSize:13.5,color:C.src,lineHeight:1.5,margin:"0 0 12px"}},
             "Follow a suggested arc — five moments that shape a memorable night: "
@@ -908,10 +910,10 @@ function ConcertBuilder({songs,loading}){
           e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
             e("button",{onClick:startArc,
               style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
-                background:C.brown,color:C.cream}},"Start from a suggested arc"),
+                background:C.blue,color:"#0A1628"}},"Start from a suggested arc"),
             e("button",{onClick:surpriseMe,
               style:{padding:"9px 18px",fontSize:14,borderRadius:8,
-                border:`1.5px solid ${C.gold}`,background:C.gold,color:C.brown,
+                border:`1.5px solid ${C.gold}`,background:C.gold,color:"#0A1628",
                 fontWeight:"bold"}},"🎲 Surprise me — build a 2-hour concert"))),
 
         /* arc view */
@@ -921,17 +923,17 @@ function ConcertBuilder({songs,loading}){
                 const rows=pickedSongs.filter(p=>p.section===sec.key);
                 const n=rows.length, [lo,hi]=sec.target;
                 const cue=n===0?null:(n>=lo&&n<=hi
-                  ?{txt:"✓ just right",col:"#4A7A4A"}
-                  :(n>hi?{txt:"more than suggested",col:"#9B6A2D"}:null));
+                  ?{txt:"✓ just right",col:"#5FB87A"}
+                  :(n>hi?{txt:"more than suggested",col:"#E0A03A"}:null));
                 return e("div",{key:sec.key,style:{border:`1.5px solid ${C.line}`,
-                  borderRadius:12,padding:"14px",background:"#fff"}},
+                  borderRadius:12,padding:"14px",background:"#1E3358"}},
                   e("div",{style:{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}},
                     e("div",{style:{fontSize:13,letterSpacing:"0.1em",textTransform:"uppercase",
-                      color:C.brown,fontWeight:"bold"}},sec.label),
+                      color:C.gold,fontWeight:"bold"}},sec.label),
                     cue&&e("span",{style:{fontSize:12,color:cue.col,fontWeight:"bold"}},cue.txt)),
                   e("div",{style:{fontSize:13,color:C.src,fontStyle:"italic",
                     margin:"3px 0 2px"}},sec.hint),
-                  e("div",{style:{fontSize:12,color:"#A8986F",margin:"0 0 10px"}},
+                  e("div",{style:{fontSize:12,color:"#7E97BD",margin:"0 0 10px"}},
                     targetText(sec.target)),
                   rows.length>0&&e("div",{style:{display:"flex",flexDirection:"column",
                     gap:8,marginBottom:10}},
@@ -949,8 +951,8 @@ function ConcertBuilder({songs,loading}){
                     : e("button",{onClick:()=>{setAddingTo(sec.key);setQuery("");},
                         disabled:atCap,
                         style:{padding:"7px 14px",fontSize:13,borderRadius:16,
-                          border:`1.5px solid ${atCap?"#D9CBA8":C.gold}`,
-                          background:"transparent",color:atCap?"#B0A176":C.src,
+                          border:`1.5px solid ${atCap?"#2C467A":C.gold}`,
+                          background:"transparent",color:atCap?"#7E97BD":C.src,
                           cursor:atCap?"default":"pointer"}},
                         "+ Add to "+sec.label));
               }),
@@ -974,27 +976,27 @@ function ConcertBuilder({songs,loading}){
           state==="done"
             ? e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,
                 borderRadius:10,padding:"16px"}},
-                e("div",{style:{fontWeight:"bold",color:C.brown,marginBottom:8}},
+                e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:8}},
                   "Your concert is saved ♪"),
                 e("input",{readOnly:true,value:shareUrl,onFocus:ev=>ev.target.select(),
                   style:{...field,fontSize:13,marginBottom:8}}),
                 e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
                   e("button",{onClick:()=>{navigator.clipboard&&navigator.clipboard.writeText(shareUrl);},
                     style:{padding:"8px 16px",fontSize:13,borderRadius:8,border:0,
-                      background:C.brown,color:C.cream}},"Copy link"),
+                      background:C.blue,color:"#0A1628"}},"Copy link"),
                   e("a",{href:shareUrl,
                     style:{padding:"8px 16px",fontSize:13,borderRadius:8,
                       background:C.blue,color:"#fff",textDecoration:"none"}},"Play it now →")))
             : e("button",{onClick:save,disabled:state==="saving",
                 style:{padding:"12px 24px",fontSize:15,borderRadius:8,border:0,
-                  background:state==="saving"?"#8A7A5A":C.brown,color:C.cream}},
+                  background:state==="saving"?"#3A5582":C.blue,color:"#0A1628"}},
                 state==="saving"?"Saving…":"Save & get share link")),
-        state==="error"&&e("p",{style:{color:"#9B2D20",marginTop:10}},msg)),
+        state==="error"&&e("p",{style:{color:"#E66A5C",marginTop:10}},msg)),
 
       /* ---------------- right: free-form library add ---------------- */
       !useArc&&e("div",{style:{flex:"1 1 320px",order:2}},
         e("h2",{style:{fontSize:14,letterSpacing:"0.12em",textTransform:"uppercase",
-          color:C.brown,borderBottom:`2px solid ${C.line}`,paddingBottom:7}},"Add songs"),
+          color:C.gold,borderBottom:`2px solid ${C.line}`,paddingBottom:7}},"Add songs"),
         e("input",{type:"search",value:query,onChange:ev=>setQuery(ev.target.value),
           placeholder:"Search the library…",style:{...field,margin:"14px 0 0"}}),
         picker(null)),
@@ -1043,9 +1045,9 @@ function ConcertPlayer({id}){
     location.reload(); };
 
   if(error)return e("main",{style:{maxWidth:620,margin:"0 auto",padding:"50px 20px",textAlign:"center"}},
-    e("p",{style:{color:"#9B2D20"}},error),
+    e("p",{style:{color:"#E66A5C"}},error),
     e("button",{onClick:back,style:{padding:"10px 20px",borderRadius:8,border:0,
-      background:C.brown,color:C.cream}},"Back to the library"));
+      background:C.blue,color:"#0A1628"}},"Back to the library"));
   if(!data)return e("main",{style:{maxWidth:620,margin:"0 auto",padding:"50px 20px",textAlign:"center"}},
     e("p",{style:{color:C.src,fontStyle:"italic"}},"Loading the concert…"));
 
@@ -1053,14 +1055,14 @@ function ConcertPlayer({id}){
     e("div",{style:{textAlign:"center",marginBottom:20}},
       e("div",{style:{fontSize:12,letterSpacing:"0.3em",textTransform:"uppercase",
         color:C.gold,marginBottom:6}},"A Concert"),
-      e("h2",{style:{margin:0,fontSize:"clamp(24px,4.5vw,36px)",color:C.brown}},data.name),
+      e("h2",{style:{margin:0,fontSize:"clamp(24px,4.5vw,36px)",color:C.gold}},data.name),
       e("div",{style:{color:C.src,fontSize:14,marginTop:6}},songs.length+" songs")),
 
     idx<0
       ? e("div",{style:{textAlign:"center",padding:"30px 0"}},
           e("button",{onClick:start,disabled:songs.length===0,
             style:{padding:"16px 38px",fontSize:18,borderRadius:30,border:0,
-              background:C.brown,color:C.cream,boxShadow:"0 4px 14px rgba(44,26,14,.2)"}},
+              background:C.blue,color:"#0A1628",boxShadow:"0 4px 14px rgba(44,26,14,.2)"}},
             "▶ Play concert"),
           e("p",{style:{color:C.src,fontSize:13,marginTop:14}},
             "Plays start to finish. Audio advances automatically; video songs you advance yourself."))
@@ -1071,7 +1073,7 @@ function ConcertPlayer({id}){
             e("div",{style:{fontSize:12,color:C.src,letterSpacing:"0.06em",
               textTransform:"uppercase",marginBottom:6}},
               "Now playing · "+(idx+1)+" of "+songs.length),
-            e("div",{style:{fontSize:22,fontWeight:"bold",color:C.brown}},current.title),
+            e("div",{style:{fontSize:22,fontWeight:"bold",color:C.gold}},current.title),
             current.talk&&e("div",{style:{fontStyle:"italic",color:C.text,marginTop:3}},
               "from “"+current.talk+"”"+(current.speaker&&current.speaker!=="—"?" · "+current.speaker:"")),
 
@@ -1093,10 +1095,10 @@ function ConcertPlayer({id}){
             alignItems:"center",marginTop:18,flexWrap:"wrap"}},
             e("button",{onClick:prev,disabled:idx===0,
               style:{padding:"10px 18px",borderRadius:8,border:`1.5px solid ${C.line}`,
-                background:"#fff",color:idx===0?"#CFC2A2":C.text}},"⏮ Prev"),
+                background:"#1E3358",color:idx===0?"#5A78A8":C.text}},"⏮ Prev"),
             e("button",{onClick:next,disabled:idx>=songs.length-1,
               style:{padding:"10px 22px",borderRadius:8,border:0,
-                background:idx>=songs.length-1?"#8A7A5A":C.brown,color:C.cream}},
+                background:idx>=songs.length-1?"#3A5582":C.blue,color:"#0A1628"}},
               idx>=songs.length-1?"Last song":"Next ⏭")),
           (curVid)&&e("p",{style:{textAlign:"center",color:C.src,fontSize:13,marginTop:10}},
             "Press Next when the video finishes to continue the concert."),
@@ -1111,7 +1113,7 @@ function ConcertPlayer({id}){
                   padding:"8px 12px",borderRadius:8,border:0,cursor:"pointer",
                   background:i===idx?C.gold:"transparent",
                   color:i===idx?C.brown:C.text}},
-                e("span",{style:{width:18,color:i===idx?C.brown:"#B0A176",
+                e("span",{style:{width:18,color:i===idx?C.brown:"#7E97BD",
                   fontWeight:"bold"}},i+1),
                 e("span",{style:{fontWeight:i===idx?"bold":"normal"}},s.title)))))),
 
