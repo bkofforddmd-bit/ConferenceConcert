@@ -125,7 +125,9 @@ function playPreview(song,onEnd){
   else previewAudio.addEventListener("loadedmetadata",begin,{once:true});
 }
 
-const CONCERT_MAX_SECONDS=2*60*60; // 2 hours
+const CONCERT_MIN_SECONDS=15*60;   // slider floor: 15 minutes
+const CONCERT_MAX_SECONDS=2*60*60; // slider ceiling: 2 hours
+const CONCERT_DEFAULT_SECONDS=2*60*60; // default target
 
 /* Effective length of a song in seconds: measured/auto value if known, else band
    duration, else a sensible default so totals stay meaningful. */
@@ -155,14 +157,38 @@ function measureAudio(url){
   });
 }
 
-/* The suggested live-show arc. Each section guides one part of the set. */
+/* The suggested live-show arc. `weight` is each section's relative share of the
+   show; Opener/Closer are pinned small. Counts are computed from the target length. */
 const ARC=[
-  {key:"opener", label:"Opener",  target:[1,1], hint:"Gather everyone in — a warm, inviting song to begin."},
-  {key:"build",  label:"Build",   target:[2,3], hint:"Lift the energy. Momentum and joy."},
-  {key:"reflect",label:"Reflect", target:[1,2], hint:"A quieter, sacred moment to turn inward."},
-  {key:"peak",   label:"Peak",    target:[1,2], hint:"The testimony high point — the heart of the night."},
-  {key:"closer", label:"Closer",  target:[1,1], hint:"Send them out — a song they carry home."},
+  {key:"opener", label:"Opener",  weight:1, pinned:1, hint:"Gather everyone in — a warm, inviting song to begin."},
+  {key:"build",  label:"Build",   weight:3,           hint:"Lift the energy. Momentum and joy."},
+  {key:"reflect",label:"Reflect", weight:2,           hint:"A quieter, sacred moment to turn inward."},
+  {key:"peak",   label:"Peak",    weight:2,           hint:"The testimony high point — the heart of the night."},
+  {key:"closer", label:"Closer",  weight:1, pinned:1, hint:"Send them out — a song they carry home."},
 ];
+
+/* Given a target length and an average song length, suggest a song count per
+   arc section. Returns a map key -> [lo,hi]. Opener/Closer stay at 1. */
+function scaledArc(targetSecs,avgSecs){
+  const avg=avgSecs&&avgSecs>0?avgSecs:210;
+  let totalSongs=Math.max(5,Math.round(targetSecs/avg)); // never fewer than the 5 sections
+  // Pinned sections (Opener, Closer) take 1 each; distribute the rest by weight.
+  const pinned=ARC.filter(s=>s.pinned).reduce((t,s)=>t+s.pinned,0);
+  let remaining=Math.max(0,totalSongs-pinned);
+  const flex=ARC.filter(s=>!s.pinned);
+  const wsum=flex.reduce((t,s)=>t+s.weight,0);
+  const out={};
+  ARC.forEach(s=>{ if(s.pinned)out[s.key]=[1,1]; });
+  let assigned=0;
+  flex.forEach((s,i)=>{
+    let n=Math.round(remaining*(s.weight/wsum));
+    if(i===flex.length-1)n=remaining-assigned; // last flex soaks up rounding
+    n=Math.max(1,n); assigned+=n;
+    // express as a small range around n for "X–Y songs" guidance
+    out[s.key]=[Math.max(1,n-1),n+1];
+  });
+  return out;
+}
 function targetText(t){
   const [lo,hi]=t;
   const n=lo===hi?lo+"":lo+"–"+hi;
@@ -804,6 +830,7 @@ function ConcertBuilder({songs,loading}){
   const [useArc,setUseArc]=useState(false);
   const [addingTo,setAddingTo]=useState(null); // section key the user is filling, or null
   const [measured,setMeasured]=useState({});   // songId -> seconds
+  const [targetSecs,setTargetSecs]=useState(CONCERT_DEFAULT_SECONDS);
   const [state,setState]=useState("idle");
   const [shareUrl,setShareUrl]=useState("");
   const [msg,setMsg]=useState("");
@@ -824,10 +851,18 @@ function ConcertBuilder({songs,loading}){
     return ()=>{alive=false;};
   },[songs]);
 
+  // Average song length (for scaling the arc + estimating fit).
+  const avgSecs=useMemo(()=>{
+    if(songs.length===0)return 210;
+    const t=songs.reduce((a,s)=>a+songSeconds(s,measured),0);
+    return Math.round(t/songs.length);
+  },[songs,measured]);
+  const arcTargets=useMemo(()=>scaledArc(targetSecs,avgSecs),[targetSecs,avgSecs]);
+
   const pickedSongs=picked.map(p=>({...p,song:byId.get(p.id)})).filter(p=>p.song);
   const totalSecs=pickedSongs.reduce((t,p)=>t+songSeconds(p.song,measured),0);
-  const atCap=totalSecs>=CONCERT_MAX_SECONDS;
-  const overCap=totalSecs>CONCERT_MAX_SECONDS;
+  const atCap=totalSecs>=targetSecs;
+  const overCap=totalSecs>targetSecs;
 
   const available=useMemo(()=>{
     const q=query.trim().toLowerCase();
@@ -839,7 +874,7 @@ function ConcertBuilder({songs,loading}){
   function add(id,section){
     // Hard cap: block adding once we've REACHED the limit. A song added while
     // still under is allowed to finish beyond the limit.
-    if(atCap){setMsg("You've reached the 2-hour limit — remove a song to add another.");
+    if(atCap){setMsg("You've reached your "+fmtTime(targetSecs)+" target — remove a song to add another.");
       setState("error");return;}
     setMsg("");if(state==="error")setState("idle");
     setPicked([...picked,{id,section:section||""}]);
@@ -863,25 +898,25 @@ function ConcertBuilder({songs,loading}){
     let idx=0; const next=()=>idx<pool.length?pool[idx++]:null;
 
     const result=[]; let secs=0;
-    const room=(s)=>secs<CONCERT_MAX_SECONDS; // finish-the-song rule: allow if under before adding
+    const room=()=>secs<targetSecs; // finish-the-song rule: allow if under before adding
     const place=(song,section)=>{
       if(!song)return false;
-      if(!room(song))return false;
+      if(!room())return false;
       result.push({id:song.id,section});
       secs+=songSeconds(song,measured);
       return true;
     };
 
-    // 1) Seed each arc section with its minimum (in arc order).
+    // 1) Seed each arc section with the count suggested for this target length.
     for(const sec of ARC){
-      const [lo]=sec.target;
+      const [lo]=arcTargets[sec.key]||[1,1];
       for(let k=0;k<lo;k++){ if(!room()) break; place(next(),sec.key); }
     }
-    // 2) Expand toward ~2 hours, adding to the sections a live show grows:
-    //    Build and Reflect, alternating, until we'd reach the cap or run out.
+    // 2) Expand toward the target, adding to the sections a live show grows:
+    //    Build and Reflect, alternating, until we'd reach the target or run out.
     const growth=["build","reflect","build"];
     let g=0;
-    while(idx<pool.length && secs<CONCERT_MAX_SECONDS){
+    while(idx<pool.length && secs<targetSecs){
       const sec=growth[g%growth.length]; g++;
       if(!place(next(),sec)) break;
     }
@@ -966,19 +1001,31 @@ function ConcertBuilder({songs,loading}){
     e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
       "Preview songs, add the ones you love, and arrange your set. Save to get a share link anyone can play."),
 
-    /* time meter */
-    e("div",{style:{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",
-      background:C.paper,border:`1.5px solid ${overCap?"#E66A5C":C.line}`,
-      borderRadius:10,padding:"12px 16px",marginBottom:20}},
-      e("div",{style:{fontSize:22,fontWeight:"bold",color:timeColor,minWidth:90}},
-        fmtTime(totalSecs)),
-      e("div",{style:{flex:1,minWidth:160}},
-        e("div",{style:{height:8,background:"#22375E",borderRadius:5,overflow:"hidden"}},
-          e("div",{style:{height:"100%",width:Math.min(100,totalSecs/CONCERT_MAX_SECONDS*100)+"%",
-            background:overCap?"#E66A5C":C.gold,transition:"width .2s"}})),
-        e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
-          atCap?"2-hour limit reached — remove a song to add more."
-               :"of a 2-hour maximum  ·  "+pickedSongs.length+" songs")),
+    /* time meter + length slider */
+    e("div",{style:{background:C.paper,border:`1.5px solid ${overCap?"#E66A5C":C.line}`,
+      borderRadius:10,padding:"14px 16px",marginBottom:20}},
+      e("div",{style:{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}},
+        e("div",{style:{fontSize:22,fontWeight:"bold",color:timeColor,minWidth:90}},
+          fmtTime(totalSecs)),
+        e("div",{style:{flex:1,minWidth:160}},
+          e("div",{style:{height:8,background:"#22375E",borderRadius:5,overflow:"hidden"}},
+            e("div",{style:{height:"100%",width:Math.min(100,totalSecs/targetSecs*100)+"%",
+              background:overCap?"#E66A5C":C.gold,transition:"width .2s"}})),
+          e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
+            atCap?fmtTime(targetSecs)+" target reached — remove a song to add more."
+                 :"of a "+fmtTime(targetSecs)+" target  ·  "+pickedSongs.length+" songs"))),
+      e("div",{style:{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.line}`}},
+        e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",
+          marginBottom:6}},
+          e("label",{htmlFor:"len",style:{fontSize:13,color:C.src}},"Concert length"),
+          e("span",{style:{fontSize:14,fontWeight:"bold",color:C.gold}},fmtTime(targetSecs))),
+        e("input",{id:"len",type:"range",min:CONCERT_MIN_SECONDS,max:CONCERT_MAX_SECONDS,
+          step:60,value:targetSecs,
+          onChange:ev=>setTargetSecs(parseInt(ev.target.value,10)),
+          style:{width:"100%",accentColor:C.gold}}),
+        e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,
+          color:C.src,marginTop:2}},
+          e("span",null,"15 min"),e("span",null,"2 hours"))),
     ),
 
     e("div",{style:{display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}},
@@ -1007,14 +1054,15 @@ function ConcertBuilder({songs,loading}){
             e("button",{onClick:surpriseMe,
               style:{padding:"9px 18px",fontSize:14,borderRadius:8,
                 border:`1.5px solid ${C.gold}`,background:C.gold,color:"#0A1628",
-                fontWeight:"bold"}},"🎲 Surprise me — build a 2-hour concert"))),
+                fontWeight:"bold"}},"🎲 Surprise me — build a "+fmtTime(targetSecs)+" concert"))),
 
         /* arc view */
         useArc
           ? e("div",{style:{display:"flex",flexDirection:"column",gap:18}},
               ARC.map(sec=>{
                 const rows=pickedSongs.filter(p=>p.section===sec.key);
-                const n=rows.length, [lo,hi]=sec.target;
+                const tgt=arcTargets[sec.key]||[1,1];
+                const n=rows.length, [lo,hi]=tgt;
                 const cue=n===0?null:(n>=lo&&n<=hi
                   ?{txt:"✓ just right",col:"#5FB87A"}
                   :(n>hi?{txt:"more than suggested",col:"#E0A03A"}:null));
@@ -1027,7 +1075,7 @@ function ConcertBuilder({songs,loading}){
                   e("div",{style:{fontSize:13,color:C.src,fontStyle:"italic",
                     margin:"3px 0 2px"}},sec.hint),
                   e("div",{style:{fontSize:12,color:"#7E97BD",margin:"0 0 10px"}},
-                    targetText(sec.target)),
+                    targetText(tgt)),
                   rows.length>0&&e("div",{style:{display:"flex",flexDirection:"column",
                     gap:8,marginBottom:10}},
                     rows.map(p=>pickedRow(p,picked.findIndex(x=>x.id===p.id)))),
@@ -1053,7 +1101,7 @@ function ConcertBuilder({songs,loading}){
                 e("button",{onClick:surpriseMe,
                   style:{padding:"7px 14px",fontSize:13,borderRadius:8,
                     border:`1.5px solid ${C.gold}`,background:"transparent",color:C.src}},
-                  "🎲 Reshuffle (2-hour concert)"),
+                  "🎲 Reshuffle ("+fmtTime(targetSecs)+")"),
                 e("button",{onClick:()=>setUseArc(false),
                   style:{padding:"7px 14px",fontSize:13,borderRadius:8,
                     border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
