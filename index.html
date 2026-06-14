@@ -759,6 +759,48 @@ function ConcertBuilder({songs,loading}){
 
   function startArc(){ setUseArc(true); setMsg(""); }
 
+  function surpriseMe(){
+    if(songs.length===0){setState("error");setMsg("No songs in the library yet.");return;}
+    // Shuffle a working copy of all songs (Fisher–Yates).
+    const pool=songs.slice();
+    for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));
+      [pool[i],pool[j]]=[pool[j],pool[i]];}
+    let idx=0; const next=()=>idx<pool.length?pool[idx++]:null;
+
+    const result=[]; let secs=0;
+    const room=(s)=>secs<CONCERT_MAX_SECONDS; // finish-the-song rule: allow if under before adding
+    const place=(song,section)=>{
+      if(!song)return false;
+      if(!room(song))return false;
+      result.push({id:song.id,section});
+      secs+=songSeconds(song,measured);
+      return true;
+    };
+
+    // 1) Seed each arc section with its minimum (in arc order).
+    for(const sec of ARC){
+      const [lo]=sec.target;
+      for(let k=0;k<lo;k++){ if(!room()) break; place(next(),sec.key); }
+    }
+    // 2) Expand toward ~2 hours, adding to the sections a live show grows:
+    //    Build and Reflect, alternating, until we'd reach the cap or run out.
+    const growth=["build","reflect","build"];
+    let g=0;
+    while(idx<pool.length && secs<CONCERT_MAX_SECONDS){
+      const sec=growth[g%growth.length]; g++;
+      if(!place(next(),sec)) break;
+    }
+    // Order the result by arc section so the set reads Opener→…→Closer.
+    const orderOf=(k)=>{const i=ARC.findIndex(a=>a.key===k);return i<0?ARC.length:i;};
+    result.sort((a,b)=>orderOf(a.section)-orderOf(b.section));
+
+    setUseArc(true);
+    setPicked(result);
+    setState("idle");
+    setMsg("");
+    if(!name)setName("A Surprise Concert");
+  }
+
   async function save(){
     if(picked.length===0){setState("error");setMsg("Add at least one song.");return;}
     setState("saving");setMsg("");
@@ -863,9 +905,14 @@ function ConcertBuilder({songs,loading}){
           e("p",{style:{fontSize:13.5,color:C.src,lineHeight:1.5,margin:"0 0 12px"}},
             "Follow a suggested arc — five moments that shape a memorable night: "
             +"Opener, Build, Reflect, Peak, Closer."),
-          e("button",{onClick:startArc,
-            style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
-              background:C.brown,color:C.cream}},"Start from a suggested arc")),
+          e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
+            e("button",{onClick:startArc,
+              style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
+                background:C.brown,color:C.cream}},"Start from a suggested arc"),
+            e("button",{onClick:surpriseMe,
+              style:{padding:"9px 18px",fontSize:14,borderRadius:8,
+                border:`1.5px solid ${C.gold}`,background:C.gold,color:C.brown,
+                fontWeight:"bold"}},"🎲 Surprise me — build a 2-hour concert"))),
 
         /* arc view */
         useArc
@@ -907,10 +954,15 @@ function ConcertBuilder({songs,loading}){
                           cursor:atCap?"default":"pointer"}},
                         "+ Add to "+sec.label));
               }),
-              e("button",{onClick:()=>setUseArc(false),
-                style:{padding:"7px 14px",fontSize:13,borderRadius:8,
-                  border:`1.5px solid ${C.line}`,background:"transparent",color:C.src,
-                  alignSelf:"flex-start"}},"Switch to a free-form list"))
+              e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
+                e("button",{onClick:surpriseMe,
+                  style:{padding:"7px 14px",fontSize:13,borderRadius:8,
+                    border:`1.5px solid ${C.gold}`,background:"transparent",color:C.src}},
+                  "🎲 Reshuffle (2-hour concert)"),
+                e("button",{onClick:()=>setUseArc(false),
+                  style:{padding:"7px 14px",fontSize:13,borderRadius:8,
+                    border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
+                  "Switch to a free-form list")))
           : pickedSongs.length>0
             ? e("div",{style:{display:"flex",flexDirection:"column",gap:8}},
                 pickedSongs.map((p,i)=>pickedRow(p,i)))
