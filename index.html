@@ -84,6 +84,19 @@ function ytId(url){if(!url)return null;
   const m=url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);return m?m[1]:null;}
 const PREVIEW_SECONDS=20;
 
+/* Small localStorage helpers (this is a deployed site, so localStorage is available).
+   Used to remember the voter's email and which suggestions they've voted for. */
+function localStorage_get(k){try{return localStorage.getItem(k)||"";}catch(_){return"";}}
+function localStorage_set(k,v){try{localStorage.setItem(k,v);}catch(_){}}
+function voted_set(){
+  try{return new Set(JSON.parse(localStorage.getItem("cac_voted")||"[]"));}
+  catch(_){return new Set();}
+}
+function mark_voted(id){
+  try{const s=voted_set();s.add(id);
+    localStorage.setItem("cac_voted",JSON.stringify([...s]));}catch(_){}
+}
+
 /* Share a link via the phone's native share sheet, falling back to copy on desktop.
    The URL is also appended to the text, because some apps (notably email) keep only
    one field — this guarantees the link travels no matter the channel. */
@@ -526,8 +539,123 @@ function SongEditor({song,onDone}){
 }
 
 function Suggest(){
+  const [board,setBoard]=useState(null);
+  const [boardErr,setBoardErr]=useState("");
+  const [showForm,setShowForm]=useState(false);
+  // voting modal state
+  const [voteFor,setVoteFor]=useState(null); // suggestion being voted on
+  const [email,setEmail]=useState(localStorage_get("cac_voter_email"));
+  const [voteMsg,setVoteMsg]=useState("");
+  const [votedIds,setVotedIds]=useState(()=>voted_set());
+
+  async function loadBoard(){
+    setBoardErr("");
+    try{
+      const r=await fetch(`${API}/suggest`,{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"board"})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not load");
+      setBoard(d.suggestions||[]);
+    }catch(err){setBoardErr(err.message);setBoard([]);}
+  }
+  useEffect(()=>{loadBoard();},[]);
+
+  async function castVote(){
+    if(!voteFor)return;
+    setVoteMsg("");
+    try{
+      const r=await fetch(`${API}/suggest`,{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"vote",id:voteFor.id,email})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not vote");
+      localStorage_set("cac_voter_email",email);
+      mark_voted(voteFor.id); setVotedIds(voted_set());
+      setVoteFor(null); loadBoard();
+    }catch(err){setVoteMsg(err.message);}
+  }
+
+  // ---- voting modal ----
+  const modal=voteFor&&e("div",{style:{position:"fixed",inset:0,background:"rgba(5,12,24,.7)",
+    display:"flex",alignItems:"center",justifyContent:"center",padding:"20px",zIndex:50},
+    onClick:()=>setVoteFor(null)},
+    e("div",{onClick:ev=>ev.stopPropagation(),
+      style:{background:C.paper,border:`1.5px solid ${C.gold}`,borderRadius:14,
+        padding:"24px",maxWidth:420,width:"100%"}},
+      e("div",{style:{fontSize:18,fontWeight:"bold",color:C.gold,marginBottom:4}},
+        "Want this too?"),
+      e("div",{style:{fontSize:14,color:C.text,marginBottom:14,fontStyle:"italic"}},
+        "“"+voteFor.talk+"”"),
+      e("p",{style:{fontSize:13,color:C.src,lineHeight:1.5,marginTop:0,marginBottom:12}},
+        "Enter your email to add your vote. We use it only to count one vote per person and to let the band gauge interest."),
+      e("input",{type:"email",value:email,onChange:ev=>setEmail(ev.target.value),
+        placeholder:"you@example.com",style:{...field,marginBottom:10}}),
+      voteMsg&&e("p",{style:{color:"#E66A5C",fontSize:13,margin:"0 0 10px"}},voteMsg),
+      e("div",{style:{display:"flex",gap:10}},
+        e("button",{onClick:castVote,
+          style:{padding:"10px 20px",fontSize:14,borderRadius:8,border:0,
+            background:C.gold,color:"#0A1628",fontWeight:"bold"}},"I want this, too!"),
+        e("button",{onClick:()=>setVoteFor(null),
+          style:{padding:"10px 18px",fontSize:14,borderRadius:8,
+            border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},"Cancel"))));
+
+  return e("main",{style:{maxWidth:680,margin:"0 auto",padding:"24px 20px 60px"}},
+    modal,
+    e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",
+      flexWrap:"wrap",gap:10,marginBottom:6}},
+      e("h2",{style:{fontSize:16,letterSpacing:"0.08em",textTransform:"uppercase",
+        color:C.gold,margin:0}},"Most-wanted talks"),
+      e("button",{onClick:()=>setShowForm(!showForm),
+        style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
+          background:C.blue,color:"#0A1628",fontWeight:"bold"}},
+        showForm?"Close":"+ Suggest a talk")),
+    e("p",{style:{color:C.src,lineHeight:1.5,marginTop:0}},
+      "Vote for the talks you'd love to hear as songs. Share one with friends to rally votes — the band watches what rises to the top."),
+
+    showForm&&e(SuggestForm,{onSent:()=>{setShowForm(false);loadBoard();}}),
+
+    board===null&&e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic",
+      padding:"30px 0"}},"Loading the board…"),
+    boardErr&&e("p",{style:{color:"#E66A5C"}},boardErr),
+    board&&board.length===0&&e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic",
+      padding:"30px 0"}},"No talks on the board yet — be the first to suggest one!"),
+    e("div",{style:{display:"flex",flexDirection:"column",gap:12,marginTop:8}},
+      (board||[]).map((s,i)=>{
+        const youVoted=votedIds.has(s.id);
+        return e("div",{key:s.id,style:{background:C.paper,
+          border:`1.5px solid ${i===0&&s.wants>0?C.gold:C.line}`,borderRadius:12,
+          padding:"16px 18px",display:"flex",gap:14,alignItems:"flex-start"}},
+          e("div",{style:{textAlign:"center",minWidth:54}},
+            e("div",{style:{fontSize:26,fontWeight:"bold",color:C.gold,lineHeight:1}},s.wants),
+            e("div",{style:{fontSize:11,color:C.src,letterSpacing:"0.04em"}},
+              s.wants===1?"want":"wants")),
+          e("div",{style:{flex:1,minWidth:0}},
+            e("div",{style:{fontSize:17,fontWeight:"bold",color:C.gold}},"“"+s.talk+"”"),
+            (s.speaker||s.session)&&e("div",{style:{fontSize:13,color:C.text,marginTop:2}},
+              [s.speaker,s.session].filter(Boolean).join(" · ")),
+            s.note&&e("div",{style:{fontSize:13,color:C.src,marginTop:6,fontStyle:"italic",
+              lineHeight:1.5}},"“"+s.note+"”"),
+            e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:12,alignItems:"center"}},
+              youVoted
+                ? e("span",{style:{fontSize:13,color:"#5FB87A",fontWeight:"bold"}},"✓ You want this")
+                : e("button",{onClick:()=>{setVoteMsg("");setVoteFor(s);},
+                    style:{padding:"7px 16px",fontSize:13,borderRadius:18,border:0,
+                      background:C.gold,color:"#0A1628",fontWeight:"bold"}},
+                    "♪ I want this, too!"),
+              s.talkUrl&&e("a",{href:s.talkUrl,target:"_blank",rel:"noopener noreferrer",
+                style:{fontSize:13,color:C.blue}},"Read talk →"),
+              e(ShareButton,{small:true,label:"Recruit votes",
+                title:"Conference as a Concert",
+                url:location.origin+location.pathname+"?suggest="+encodeURIComponent(s.id),
+                text:"🎵 Help me get “"+s.talk+"” turned into a song on Conference as a Concert — vote for it here:"}))));
+      })),
+  );
+}
+
+/* The suggest-a-talk form, shown when "+ Suggest a talk" is open. */
+function SuggestForm({onSent}){
   const [f,setF]=useState({talk:"",speaker:"",session:"",talkUrl:"",note:"",from:""});
-  const [state,setState]=useState("idle"); // idle|sending|done|error
+  const [state,setState]=useState("idle");
   const [msg,setMsg]=useState("");
   const up=(k)=>(ev)=>setF({...f,[k]:ev.target.value});
   async function submit(){
@@ -538,23 +666,21 @@ function Suggest(){
         headers:{"Content-Type":"application/json"},body:JSON.stringify(f)});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Something went wrong");
-      setState("done");setF({talk:"",speaker:"",session:"",talkUrl:"",note:"",from:""});
+      setState("done");
     }catch(err){setState("error");setMsg(err.message);}
   }
-  if(state==="done")return e("main",{style:{maxWidth:560,margin:"0 auto",padding:"50px 20px"}},
-    e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,borderRadius:12,
-      padding:"34px 26px",textAlign:"center"}},
-      e("div",{style:{fontSize:34,marginBottom:8}},"♪"),
-      e("h2",{style:{margin:"0 0 8px",color:C.gold}},"Thank you!"),
-      e("p",{style:{color:C.src,lineHeight:1.6,margin:"0 0 18px"}},
-        "Your suggestion is with the band. Maybe it becomes the next song."),
-      e("button",{onClick:()=>setState("idle"),
-        style:{padding:"10px 22px",fontSize:14,borderRadius:8,border:0,
-          background:C.blue,color:"#0A1628"}},"Suggest another")));
-  return e("main",{style:{maxWidth:560,margin:"0 auto",padding:"28px 20px 60px"}},
-    e("p",{style:{color:C.src,lineHeight:1.6,marginTop:0}},
-      "Heard a General Conference talk that should become a song? Tell the band about it."),
-    e("div",{style:{display:"flex",flexDirection:"column",gap:16}},
+  if(state==="done")return e("div",{style:{background:C.paper,border:`1.5px solid ${C.gold}`,
+    borderRadius:12,padding:"22px",textAlign:"center",marginBottom:18}},
+    e("div",{style:{fontSize:28,marginBottom:6}},"♪"),
+    e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:6}},"Thank you!"),
+    e("p",{style:{color:C.src,lineHeight:1.5,margin:"0 0 14px",fontSize:14}},
+      "Your suggestion goes to the band for approval. Once approved it appears on the board for everyone to vote on."),
+    e("button",{onClick:onSent,
+      style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
+        background:C.blue,color:"#0A1628"}},"Back to the board"));
+  return e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,
+    padding:"18px",marginBottom:18}},
+    e("div",{style:{display:"flex",flexDirection:"column",gap:14}},
       e("div",null,e("label",{style:lbl,htmlFor:"s-talk"},"Talk title *"),
         e("input",{id:"s-talk",style:field,value:f.talk,onChange:up("talk"),
           placeholder:"e.g. The Ministry of Angels"})),
@@ -569,18 +695,18 @@ function Suggest(){
         e("input",{id:"s-url",style:field,value:f.talkUrl,onChange:up("talkUrl"),
           placeholder:"Paste the churchofjesuschrist.org link if you have it"})),
       e("div",null,e("label",{style:lbl,htmlFor:"s-note"},"Why this one? (optional)"),
-        e("textarea",{id:"s-note",style:{...field,minHeight:90,resize:"vertical"},
+        e("textarea",{id:"s-note",style:{...field,minHeight:80,resize:"vertical"},
           value:f.note,onChange:up("note"),
           placeholder:"A line, a theme, a moment that moved you…"})),
       e("div",null,e("label",{style:lbl,htmlFor:"s-from"},"Your name (optional)"),
-        e("input",{id:"s-from",style:field,value:f.from,onChange:up("from"),placeholder:"So we can thank you"})),
+        e("input",{id:"s-from",style:field,value:f.from,onChange:up("from"),
+          placeholder:"So we can thank you"})),
       state==="error"&&e("p",{style:{color:"#E66A5C",margin:0}},msg),
       e("button",{onClick:submit,disabled:state==="sending",
         style:{padding:"12px 24px",fontSize:15,borderRadius:8,border:0,
           background:state==="sending"?"#3A5582":C.blue,color:"#0A1628",
-          alignSelf:"flex-start"}},
-        state==="sending"?"Sending…":"Send to the band")),
-  );
+          fontWeight:"bold",alignSelf:"flex-start"}},
+        state==="sending"?"Sending…":"Send to the band")));
 }
 
 /* ------------------------------------------- Suggestions inbox (band) */
@@ -603,11 +729,11 @@ function SuggestionsInbox(){
   }
   useEffect(()=>{load();},[]);
 
-  async function act(action,id,status){
+  async function act(action,id,status,approved){
     try{
       await fetch(`${API}/suggest`,{method:"POST",
         headers:{"Content-Type":"application/json","x-upload-password":pw},
-        body:JSON.stringify({action,id,status})});
+        body:JSON.stringify({action,id,status,approved})});
       load();
     }catch(_){}
   }
@@ -642,18 +768,39 @@ function SuggestionsInbox(){
           flexWrap:"wrap",alignItems:"baseline"}},
           e("div",{style:{fontSize:18,fontWeight:"bold",color:C.gold}},"“"+s.talk+"”"),
           e("div",{style:{fontSize:12,color:C.src}},fmtDate(s.createdAt))),
-        (s.speaker||s.session)&&e("div",{style:{fontSize:14,color:C.text,marginTop:3}},
+        e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:6,alignItems:"center"}},
+          e("span",{style:{fontSize:11,padding:"2px 9px",borderRadius:10,
+            background:s.approved?"#1E4D2B":"#4A3A1E",
+            color:s.approved?"#7FD89A":"#E0C07A"}},
+            s.approved?"On the board":"Pending approval"),
+          e("span",{style:{fontSize:13,color:C.gold,fontWeight:"bold"}},
+            (Array.isArray(s.voters)?s.voters.length:0)+" "+
+            ((Array.isArray(s.voters)?s.voters.length:0)===1?"want":"wants"))),
+        (s.speaker||s.session)&&e("div",{style:{fontSize:14,color:C.text,marginTop:6}},
           [s.speaker,s.session].filter(Boolean).join(" · ")),
         s.note&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:8,lineHeight:1.5,
           fontStyle:"italic"}},"“"+s.note+"”"),
         s.from&&e("div",{style:{fontSize:13,color:C.src,marginTop:6}},"— "+s.from),
+        Array.isArray(s.voters)&&s.voters.length>0&&e("details",{style:{marginTop:8}},
+          e("summary",{style:{fontSize:12,color:C.blue,cursor:"pointer"}},
+            "View "+s.voters.length+" interested email"+(s.voters.length===1?"":"s")),
+          e("div",{style:{fontSize:12,color:C.src,marginTop:6,lineHeight:1.6,
+            wordBreak:"break-all"}},s.voters.join(", "))),
         e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:12,alignItems:"center"}},
           s.talkUrl&&e("a",{href:s.talkUrl,target:"_blank",rel:"noopener noreferrer",
             style:{fontSize:13,color:C.blue}},"Open talk →"),
+          s.approved
+            ? e("button",{onClick:()=>act("approve",s.id,null,false),
+                style:{padding:"6px 14px",fontSize:13,borderRadius:8,
+                  border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
+                "Hide from board")
+            : e("button",{onClick:()=>act("approve",s.id,null,true),
+                style:{padding:"6px 14px",fontSize:13,borderRadius:8,border:0,
+                  background:C.gold,color:"#0A1628",fontWeight:"bold"}},"✓ Approve to board"),
           s.status!=="done"
             ? e("button",{onClick:()=>act("resolve",s.id,"done"),
                 style:{padding:"6px 14px",fontSize:13,borderRadius:8,border:0,
-                  background:C.blue,color:"#0A1628"}},"✓ Mark done")
+                  background:C.blue,color:"#0A1628"}},"Mark done")
             : e("button",{onClick:()=>act("resolve",s.id,"new"),
                 style:{padding:"6px 14px",fontSize:13,borderRadius:8,
                   border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
@@ -1366,7 +1513,8 @@ function ConcertPlayer({id}){
 function App(){
   const concertId=new URLSearchParams(location.search).get("concert");
   const songParam=new URLSearchParams(location.search).get("song");
-  const [tab,setTab]=useState("library");
+  const suggestParam=new URLSearchParams(location.search).get("suggest");
+  const [tab,setTab]=useState(suggestParam?"suggest":"library");
   const [songs,setSongs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState("");
