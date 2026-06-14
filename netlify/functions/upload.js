@@ -63,7 +63,7 @@ exports.handler = async (event) => {
       previewStart: Math.max(0, Math.min(3600, parseInt(song.previewStart, 10) || 0)),
       duration: Math.max(0, Math.min(3600, parseInt(song.duration, 10) || 0)),
       lyrics:  clip(song.lyrics, 8000),
-      lyricsDelay: (song.lyricsDelay===""||song.lyricsDelay==null)?15:Math.max(0,Math.min(120,parseInt(song.lyricsDelay,10)||0)),
+      lyricsDelay: (song.lyricsDelay===""||song.lyricsDelay==null)?35:Math.max(0,Math.min(120,parseInt(song.lyricsDelay,10)||0)),
       blurb:   clip(song.blurb, 400),
       addedAt: new Date().toISOString(),
     };
@@ -104,7 +104,7 @@ exports.handler = async (event) => {
         previewStart: Math.max(0, Math.min(3600, parseInt(song.previewStart, 10) || 0)),
         duration: Math.max(0, Math.min(3600, parseInt(song.duration, 10) || 0)),
         lyrics:  clip(song.lyrics, 8000),
-      lyricsDelay: (song.lyricsDelay===""||song.lyricsDelay==null)?15:Math.max(0,Math.min(120,parseInt(song.lyricsDelay,10)||0)),
+      lyricsDelay: (song.lyricsDelay===""||song.lyricsDelay==null)?35:Math.max(0,Math.min(120,parseInt(song.lyricsDelay,10)||0)),
         blurb:   clip(song.blurb, 400),
         updatedAt: new Date().toISOString(),
       };
