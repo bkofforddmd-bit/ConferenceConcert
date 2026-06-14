@@ -22,6 +22,12 @@ exports.handler = async (event) => {
 
   const action = body.action || (body.song ? "save" : "");
 
+  // ---- 0) Verify the password (used to enter band mode without uploading) ----
+  // Reaching here means the password check above already passed.
+  if (action === "verify") {
+    return json(200, { ok: true });
+  }
+
   // ---- 1) Hand out a presigned URL so the browser uploads straight to R2 ----
   if (action === "sign") {
     const ct = clip(body.contentType, 80) || "audio/mpeg";

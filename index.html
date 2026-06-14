@@ -216,7 +216,7 @@ function targetText(t){
 }
 
 /* ----------------------------------------------------------- Header */
-function Header({tab,setTab}){
+function Header({tab,setTab,bandVersion}){
   const tabs=[["library","Library"],["concert","Build a Concert"],["suggest","Suggest a Talk"],["band","Band Upload"]];
   const bandMode=!!sessionStorage.getItem("cac_pw");
   if(bandMode)tabs.push(["inbox","Suggestions"]);
@@ -846,9 +846,34 @@ function SuggestionsInbox(){
 }
 
 /* ------------------------------------------------------- Band upload */
-function Band({onAdded}){
+function Band({onAdded,onBandChange}){
   const [pw,setPw]=useState(sessionStorage.getItem("cac_pw")||"");
   const [showPw,setShowPw]=useState(false);
+  const [bandOn,setBandOn]=useState(!!sessionStorage.getItem("cac_pw"));
+  const [pwState,setPwState]=useState("idle"); // idle|checking|error
+  const [pwMsg,setPwMsg]=useState("");
+
+  async function enterBandMode(){
+    if(!pw.trim()){setPwState("error");setPwMsg("Enter the band password first.");return;}
+    setPwState("checking");setPwMsg("");
+    try{
+      const r=await fetch(`${API}/upload`,{method:"POST",
+        headers:{"Content-Type":"application/json","x-upload-password":pw},
+        body:JSON.stringify({action:"verify"})});
+      if(r.ok){
+        sessionStorage.setItem("cac_pw",pw);
+        setBandOn(true);setPwState("idle");setPwMsg("");
+        onBandChange&&onBandChange();
+      }else{
+        setPwState("error");setPwMsg("That password didn't work.");
+      }
+    }catch(err){setPwState("error");setPwMsg("Couldn't check the password. Try again.");}
+  }
+  function exitBandMode(){
+    sessionStorage.removeItem("cac_pw");
+    setBandOn(false);setPwMsg("");
+    onBandChange&&onBandChange();
+  }
   const [file,setFile]=useState(null);
   const [drag,setDrag]=useState(false);
   const [s,setS]=useState({title:"",talk:"",speaker:"",session:"",theme:"",
@@ -959,6 +984,7 @@ function Band({onAdded}){
       const d=await saveRes.json();
       if(!saveRes.ok)throw new Error(d.error||"Could not save song");
       sessionStorage.setItem("cac_pw",pw);
+      setBandOn(true);onBandChange&&onBandChange();
       setState("done");setMsg("");setFile(null);
       setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",blurb:""});
       setGdocUrl("");setGdocState("idle");setGdocMsg("");setGdocPreview("");setProjMsg("");
@@ -979,7 +1005,22 @@ function Band({onAdded}){
             border:`1.5px solid ${C.line}`,background:"transparent",color:C.src,
             whiteSpace:"nowrap"}},showPw?"Hide":"Show")),
       pw&&e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
-        "Length: "+pw.length+" characters"+(/^\s|\s$/.test(pw)?" — ⚠ starts or ends with a space":""))),
+        "Length: "+pw.length+" characters"+(/^\s|\s$/.test(pw)?" — ⚠ starts or ends with a space":"")),
+      e("div",{style:{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginTop:10}},
+        bandOn
+          ? e("span",{style:{fontSize:13,color:"#5FB87A",fontWeight:"bold"}},"✓ Band mode is on")
+          : e("button",{onClick:enterBandMode,disabled:pwState==="checking",
+              style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
+                background:pwState==="checking"?"#3A5582":C.gold,color:"#0A1628",
+                fontWeight:"bold"}},
+              pwState==="checking"?"Checking…":"Enter band mode"),
+        bandOn&&e("button",{onClick:exitBandMode,
+          style:{padding:"8px 14px",fontSize:13,borderRadius:8,
+            border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
+          "Sign out of band mode")),
+      pwMsg&&e("div",{style:{fontSize:13,color:pwState==="error"?"#E66A5C":C.src,marginTop:6}},pwMsg),
+      bandOn&&e("div",{style:{fontSize:13,color:C.src,marginTop:8,lineHeight:1.5}},
+        "You can now review suggestions, approve them, and edit songs — even without uploading.")),
     e("div",{style:{marginTop:18,border:`1.5px solid ${C.gold}`,borderRadius:12,
       background:C.paper,padding:"16px 18px"}},
       e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:4}},
@@ -1550,6 +1591,8 @@ function App(){
   const [songs,setSongs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState("");
+  const [bandVersion,setBandVersion]=useState(0); // bump to re-evaluate band mode
+  const onBandChange=()=>setBandVersion(v=>v+1);
   async function load(){
     setLoading(true);setError("");
     try{
@@ -1572,12 +1615,12 @@ function App(){
   );
 
   return e("div",null,
-    e(Header,{tab,setTab}),
+    e(Header,{tab,setTab,bandVersion}),
     tab==="library"&&e(Library,{songs,loading,error,onReload:load,focusId:songParam}),
     tab==="concert"&&e(ConcertBuilder,{songs,loading}),
     tab==="suggest"&&e(Suggest),
     tab==="inbox"&&e(SuggestionsInbox),
-    tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();}}),
+    tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();},onBandChange}),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
       borderTop:`1px solid ${C.line}`,background:C.paper}},
       e("div",{style:{marginBottom:14}},
