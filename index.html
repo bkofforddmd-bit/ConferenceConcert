@@ -6,6 +6,11 @@
 <title>Conference as a Concert — Song Library</title>
 <link rel="icon" type="image/png" href="icon.png" />
 <link rel="apple-touch-icon" href="icon.png" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#13294B" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Concert" />
 <style>
   :root{
     --brown:#13294B; --gold:#F2C14E; --cream:#0A1628; --text:#EAF0FA;
@@ -33,6 +38,43 @@ const e = React.createElement;
 const C = {brown:"#13294B",gold:"#F2C14E",cream:"#0A1628",text:"#EAF0FA",
   blue:"#4F9BE8",src:"#9FB4D4",paper:"#162A4A",line:"#2C467A"};
 
+// Share a link via the phone's native share sheet; fall back to copying.
+// Returns a short status string for optional UI feedback.
+async function shareOrCopy({title,text,url}){
+  try{
+    if(navigator.share){
+      await navigator.share({title,text,url});
+      return "shared";
+    }
+  }catch(err){
+    if(err&&err.name==="AbortError")return "cancelled"; // user closed the sheet
+  }
+  try{
+    if(navigator.clipboard){ await navigator.clipboard.writeText(url); return "copied"; }
+  }catch(_){}
+  return "failed";
+}
+
+// A small reusable Share button.
+function ShareButton({title,text,url,label,small,style}){
+  const [status,setStatus]=useState("");
+  async function go(ev){
+    ev&&ev.stopPropagation();
+    const r=await shareOrCopy({title,text,url});
+    if(r==="copied")setStatus("Link copied!");
+    else if(r==="failed")setStatus("Couldn't share");
+    else setStatus("");
+    if(r==="copied")setTimeout(()=>setStatus(""),2000);
+  }
+  return e("span",{style:{display:"inline-flex",alignItems:"center",gap:8}},
+    e("button",{onClick:go,
+      style:Object.assign({padding:small?"4px 12px":"8px 16px",fontSize:small?12:14,
+        borderRadius:small?16:8,border:`1.5px solid ${C.blue}`,
+        background:"transparent",color:C.blue,whiteSpace:"nowrap",cursor:"pointer"},style||{})},
+      label||"Share"),
+    status&&e("span",{style:{fontSize:12,color:C.src}},status));
+}
+
 const API = "/.netlify/functions";
 const GROUPINGS = [
   {key:"session",label:"Session"},{key:"speaker",label:"Speaker"},
@@ -41,6 +83,25 @@ const GROUPINGS = [
 function ytId(url){if(!url)return null;
   const m=url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);return m?m[1]:null;}
 const PREVIEW_SECONDS=20;
+
+/* Share a link via the phone's native share sheet, falling back to copy on desktop.
+   Returns a short status string the caller can show briefly. */
+async function shareLink(title,text,url){
+  try{
+    if(navigator.share){
+      await navigator.share({title,text,url});
+      return "shared";
+    }
+  }catch(err){
+    if(err&&err.name==="AbortError")return "cancelled"; // user dismissed the sheet
+  }
+  try{
+    if(navigator.clipboard){ await navigator.clipboard.writeText(url); return "copied"; }
+  }catch(_){}
+  // Last-ditch fallback
+  try{ window.prompt("Copy this link:",url); }catch(_){}
+  return "copied";
+}
 
 /* One shared <audio> element drives all 20s previews so only one plays at a time. */
 const previewAudio=typeof Audio!=="undefined"?new Audio():null;
@@ -169,7 +230,12 @@ function Player({song}){
       song.talkUrl&&e("a",{href:song.talkUrl,target:"_blank",rel:"noopener noreferrer",
         style:{display:"inline-block",marginTop:8,fontSize:14}},"Read the talk →"),
       e(LyricsToggle,{song})),
-    song.audioUrl&&e("div",{style:{marginTop:14}},e(PreviewButton,{song})),
+    e("div",{style:{marginTop:14,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}},
+      song.audioUrl&&e(PreviewButton,{song}),
+      e(ShareButton,{small:true,label:"Share song",
+        title:"Conference as a Concert",
+        text:"♪ “"+song.title+"”"+(song.talk?" — from “"+song.talk+"”":"")+" on Conference as a Concert",
+        url:location.origin+location.pathname})),
   );
 }
 
@@ -215,6 +281,24 @@ function RowLinks({song}){
       onClick:ev=>ev.stopPropagation(),
       style:{fontSize:12,color:C.blue}},"Talk →"),
     song.lyrics&&e(LyricsToggle,{song,compact:true}));
+}
+
+/* ------------------------------------------------------- Share button */
+function ShareButton({title,text,url,label,small}){
+  const [status,setStatus]=useState("");
+  async function go(ev){
+    ev&&ev.stopPropagation();
+    const r=await shareLink(title,text,url);
+    if(r==="copied"){setStatus("Link copied!");setTimeout(()=>setStatus(""),1800);}
+    else if(r==="shared"){setStatus("Shared!");setTimeout(()=>setStatus(""),1500);}
+  }
+  return e("span",{style:{display:"inline-flex",alignItems:"center",gap:8}},
+    e("button",{onClick:go,
+      style:{padding:small?"5px 12px":"8px 16px",fontSize:small?12:14,borderRadius:small?16:8,
+        border:`1.5px solid ${C.blue}`,background:"transparent",color:C.blue,
+        fontWeight:"bold",whiteSpace:"nowrap",cursor:"pointer"}},
+      (label||"Share")),
+    status&&e("span",{style:{fontSize:12,color:C.gold}},status));
 }
 
 /* --------------------------------------------------------- Song card */
@@ -980,7 +1064,11 @@ function ConcertBuilder({songs,loading}){
                   "Your concert is saved ♪"),
                 e("input",{readOnly:true,value:shareUrl,onFocus:ev=>ev.target.select(),
                   style:{...field,fontSize:13,marginBottom:8}}),
-                e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+                e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
+                  e(ShareButton,{small:true,label:"Share concert",
+                    title:"A Concert — Conference as a Concert",
+                    text:"🎶 Listen to “"+(name||"my concert")+"” — a concert I built on Conference as a Concert",
+                    url:shareUrl}),
                   e("button",{onClick:()=>{navigator.clipboard&&navigator.clipboard.writeText(shareUrl);},
                     style:{padding:"8px 16px",fontSize:13,borderRadius:8,border:0,
                       background:C.blue,color:"#0A1628"}},"Copy link"),
@@ -1117,7 +1205,12 @@ function ConcertPlayer({id}){
                   fontWeight:"bold"}},i+1),
                 e("span",{style:{fontWeight:i===idx?"bold":"normal"}},s.title)))))),
 
-    e("div",{style:{textAlign:"center",marginTop:30}},
+    e("div",{style:{textAlign:"center",marginTop:30,display:"flex",gap:12,
+      justifyContent:"center",flexWrap:"wrap"}},
+      e(ShareButton,{label:"Share this concert",
+        title:"A Concert — Conference as a Concert",
+        text:"🎶 Listen to “"+(data.name||"this concert")+"” on Conference as a Concert",
+        url:location.href}),
       e("button",{onClick:back,style:{padding:"9px 18px",fontSize:13,borderRadius:8,
         border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
         "← Back to the library")),
@@ -1160,10 +1253,22 @@ function App(){
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();}}),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
       borderTop:`1px solid ${C.line}`,background:C.paper}},
+      e("div",{style:{marginBottom:14}},
+        e(ShareButton,{label:"Share the app",
+          title:"Conference as a Concert",
+          text:"🎶 Conference as a Concert — General Conference talks set to music. Stream songs and build your own concert:",
+          url:location.origin+location.pathname})),
       "Conference as a Concert · Y-Mountain Music Co."),
   );
 }
 ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+
+// Register the service worker so the app is installable on phones.
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>{
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  });
+}
 </script>
 </body>
 </html>
