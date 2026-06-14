@@ -243,9 +243,41 @@ function Header({tab,setTab,bandVersion}){
 }
 
 /* ----------------------------------------------------------- Player */
+/* --------------------------------------------- Scrolling lyrics panel */
+/* Follows an <audio> element's progress and scrolls the lyrics so the current
+   point in the song stays centered. Falls back gracefully if no duration yet. */
+function ScrollingLyrics({audioRef,lyrics,height}){
+  const boxRef=React.useRef(null);
+  const innerRef=React.useRef(null);
+  useEffect(()=>{
+    if(!lyrics)return;
+    let raf;
+    const tick=()=>{
+      const a=audioRef&&audioRef.current, box=boxRef.current, inner=innerRef.current;
+      if(a&&box&&inner&&a.duration&&isFinite(a.duration)&&a.duration>0){
+        const frac=Math.min(1,Math.max(0,a.currentTime/a.duration));
+        const scrollable=Math.max(0,inner.scrollHeight-box.clientHeight);
+        box.scrollTop=scrollable*frac;
+      }
+      raf=requestAnimationFrame(tick);
+    };
+    raf=requestAnimationFrame(tick);
+    return ()=>cancelAnimationFrame(raf);
+  },[lyrics,audioRef]);
+  if(!lyrics)return null;
+  return e("div",{ref:boxRef,style:{maxHeight:height||220,overflow:"hidden",
+    borderRadius:8,background:C.cream,border:`1px solid ${C.line}`,
+    padding:"16px 18px",marginTop:14,
+    maskImage:"linear-gradient(to bottom,transparent,#000 14%,#000 86%,transparent)",
+    WebkitMaskImage:"linear-gradient(to bottom,transparent,#000 14%,#000 86%,transparent)"}},
+    e("pre",{ref:innerRef,style:{whiteSpace:"pre-wrap",fontFamily:"Georgia,serif",
+      fontSize:15,lineHeight:1.8,color:C.text,margin:0,textAlign:"center"}},lyrics));
+}
+
 function Player({song}){
   const vid=ytId(song.youtube);
   const [mode,setMode]=useState(vid?"video":(song.audioUrl?"audio":"none"));
+  const audioRef=React.useRef(null);
   useEffect(()=>{setMode(vid?"video":(song.audioUrl?"audio":"none"));},[song.id]);
   const hasVideo=!!vid,hasAudio=!!song.audioUrl;
   return e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,
@@ -264,7 +296,8 @@ function Player({song}){
         allow:"accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture",
         style:{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}})),
     mode==="audio"&&hasAudio&&e("div",{style:{padding:"6px 0"}},
-      e("audio",{controls:true,preload:"none",src:song.audioUrl,style:{width:"100%"}})),
+      e("audio",{ref:audioRef,controls:true,preload:"none",src:song.audioUrl,style:{width:"100%"}}),
+      song.lyrics&&e(ScrollingLyrics,{audioRef,lyrics:song.lyrics})),
     mode==="none"&&e("div",{style:{padding:"26px 16px",textAlign:"center",color:C.src,
       background:C.cream,borderRadius:8,fontStyle:"italic"}},
       "This song isn't streaming yet — check back soon."),
@@ -1538,8 +1571,10 @@ function ConcertPlayer({id}){
                     allow:"accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture",
                     style:{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}}))
               : current.audioUrl
-                ? e("audio",{ref:audioRef,controls:true,style:{width:"100%",marginTop:14},
-                    onEnded:next})
+                ? e("div",null,
+                    e("audio",{ref:audioRef,controls:true,style:{width:"100%",marginTop:14},
+                      onEnded:next}),
+                    current.lyrics&&e(ScrollingLyrics,{audioRef,lyrics:current.lyrics,height:240}))
                 : e("div",{style:{padding:"20px",textAlign:"center",color:C.src,
                     fontStyle:"italic",marginTop:14}},"(No media for this song yet)")),
 
