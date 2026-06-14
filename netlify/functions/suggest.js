@@ -1,9 +1,12 @@
 // POST /.netlify/functions/suggest
-// Body: { talk, speaker, session, note, from }
-// Open (no auth). Appends a suggestion to suggestions.json in R2.
+//   (open)  { talk, speaker, session, talkUrl, note, from }  -> saves a suggestion
+//   (band)  { action:"list" }     + x-upload-password        -> returns all suggestions
+//   (band)  { action:"resolve", id, status }                 -> sets a suggestion's status
+//   (band)  { action:"delete", id }                          -> removes a suggestion
 const { getJSON, putJSON, SUGGESTIONS_KEY, json } = require("./_r2");
 
 const clip = (s, n) => String(s == null ? "" : s).slice(0, n).trim();
+const UPLOAD_PASSWORD = process.env.UPLOAD_PASSWORD;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
@@ -12,6 +15,36 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body || "{}"); }
   catch { return json(400, { error: "Bad JSON" }); }
 
+  const action = body.action || "create";
+
+  // ---- Band-only actions (password required) ----
+  if (action === "list" || action === "resolve" || action === "delete") {
+    const pw = event.headers["x-upload-password"] || event.headers["X-Upload-Password"];
+    if (!UPLOAD_PASSWORD || pw !== UPLOAD_PASSWORD) return json(401, { error: "Wrong or missing password" });
+
+    const store = await getJSON(SUGGESTIONS_KEY, { suggestions: [] });
+    store.suggestions = store.suggestions || [];
+
+    if (action === "list") {
+      return json(200, { suggestions: store.suggestions });
+    }
+    const id = clip(body.id, 60);
+    if (!id) return json(400, { error: "Missing id" });
+    if (action === "resolve") {
+      const i = store.suggestions.findIndex((s) => s.id === id);
+      if (i < 0) return json(404, { error: "Not found" });
+      store.suggestions[i].status = clip(body.status, 20) || "done";
+      await putJSON(SUGGESTIONS_KEY, store);
+      return json(200, { ok: true });
+    }
+    if (action === "delete") {
+      store.suggestions = store.suggestions.filter((s) => s.id !== id);
+      await putJSON(SUGGESTIONS_KEY, store);
+      return json(200, { ok: true });
+    }
+  }
+
+  // ---- Open action: create a suggestion ----
   const talk = clip(body.talk, 200);
   if (!talk) return json(400, { error: "A talk title is required" });
 
@@ -20,6 +53,7 @@ exports.handler = async (event) => {
     talk,
     speaker: clip(body.speaker, 120),
     session: clip(body.session, 80),
+    talkUrl: clip(body.talkUrl, 500),
     note:    clip(body.note, 600),
     from:    clip(body.from, 80),
     createdAt: new Date().toISOString(),

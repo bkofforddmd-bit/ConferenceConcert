@@ -198,6 +198,8 @@ function targetText(t){
 /* ----------------------------------------------------------- Header */
 function Header({tab,setTab}){
   const tabs=[["library","Library"],["concert","Build a Concert"],["suggest","Suggest a Talk"],["band","Band Upload"]];
+  const bandMode=!!sessionStorage.getItem("cac_pw");
+  if(bandMode)tabs.push(["inbox","Suggestions"]);
   return e("header",{style:{background:C.brown,color:C.cream,
     borderBottom:`4px solid ${C.gold}`}},
     e("div",{style:{padding:"26px 20px 8px",textAlign:"center"}},
@@ -524,7 +526,7 @@ function SongEditor({song,onDone}){
 }
 
 function Suggest(){
-  const [f,setF]=useState({talk:"",speaker:"",session:"",note:"",from:""});
+  const [f,setF]=useState({talk:"",speaker:"",session:"",talkUrl:"",note:"",from:""});
   const [state,setState]=useState("idle"); // idle|sending|done|error
   const [msg,setMsg]=useState("");
   const up=(k)=>(ev)=>setF({...f,[k]:ev.target.value});
@@ -536,7 +538,7 @@ function Suggest(){
         headers:{"Content-Type":"application/json"},body:JSON.stringify(f)});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Something went wrong");
-      setState("done");setF({talk:"",speaker:"",session:"",note:"",from:""});
+      setState("done");setF({talk:"",speaker:"",session:"",talkUrl:"",note:"",from:""});
     }catch(err){setState("error");setMsg(err.message);}
   }
   if(state==="done")return e("main",{style:{maxWidth:560,margin:"0 auto",padding:"50px 20px"}},
@@ -563,6 +565,9 @@ function Suggest(){
         e("div",{style:{flex:"1 1 140px"}},e("label",{style:lbl,htmlFor:"s-session"},"Session"),
           e("input",{id:"s-session",style:field,value:f.session,onChange:up("session"),
             placeholder:"e.g. October 2008"}))),
+      e("div",null,e("label",{style:lbl,htmlFor:"s-url"},"Link to the talk (optional)"),
+        e("input",{id:"s-url",style:field,value:f.talkUrl,onChange:up("talkUrl"),
+          placeholder:"Paste the churchofjesuschrist.org link if you have it"})),
       e("div",null,e("label",{style:lbl,htmlFor:"s-note"},"Why this one? (optional)"),
         e("textarea",{id:"s-note",style:{...field,minHeight:90,resize:"vertical"},
           value:f.note,onChange:up("note"),
@@ -575,6 +580,89 @@ function Suggest(){
           background:state==="sending"?"#3A5582":C.blue,color:"#0A1628",
           alignSelf:"flex-start"}},
         state==="sending"?"Sending…":"Send to the band")),
+  );
+}
+
+/* ------------------------------------------- Suggestions inbox (band) */
+function SuggestionsInbox(){
+  const [items,setItems]=useState(null);
+  const [error,setError]=useState("");
+  const [filter,setFilter]=useState("open"); // open|all
+  const pw=sessionStorage.getItem("cac_pw")||"";
+
+  async function load(){
+    setError("");
+    try{
+      const r=await fetch(`${API}/suggest`,{method:"POST",
+        headers:{"Content-Type":"application/json","x-upload-password":pw},
+        body:JSON.stringify({action:"list"})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not load");
+      setItems(d.suggestions||[]);
+    }catch(err){setError(err.message);setItems([]);}
+  }
+  useEffect(()=>{load();},[]);
+
+  async function act(action,id,status){
+    try{
+      await fetch(`${API}/suggest`,{method:"POST",
+        headers:{"Content-Type":"application/json","x-upload-password":pw},
+        body:JSON.stringify({action,id,status})});
+      load();
+    }catch(_){}
+  }
+
+  if(items===null)return e("main",{style:{maxWidth:720,margin:"0 auto",padding:"40px 20px"}},
+    e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic"}},"Loading suggestions…"));
+
+  const shown=items.filter(s=>filter==="all"||s.status!=="done");
+  const fmtDate=(iso)=>{try{return new Date(iso).toLocaleDateString(undefined,
+    {month:"short",day:"numeric",year:"numeric"});}catch(_){return"";}};
+
+  return e("main",{style:{maxWidth:720,margin:"0 auto",padding:"24px 20px 60px"}},
+    e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",
+      flexWrap:"wrap",gap:10,marginBottom:16}},
+      e("p",{style:{color:C.src,lineHeight:1.6,margin:0}},
+        "Talk suggestions from visitors. Mark one done once you've turned it into a song."),
+      e("div",{style:{display:"flex",gap:6}},
+        ["open","all"].map(fk=>e("button",{key:fk,onClick:()=>setFilter(fk),
+          "aria-pressed":filter===fk,
+          style:{padding:"6px 14px",fontSize:13,borderRadius:16,
+            border:`1.5px solid ${filter===fk?C.gold:C.line}`,
+            background:filter===fk?C.gold:"transparent",
+            color:filter===fk?"#0A1628":C.src}},fk==="open"?"Open":"All")))),
+    error&&e("p",{style:{color:"#E66A5C"}},error),
+    shown.length===0&&e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic",
+      padding:"40px 0"}},filter==="open"?"No open suggestions — all caught up!":"No suggestions yet."),
+    e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+      shown.map(s=>e("div",{key:s.id,style:{background:C.paper,
+        border:`1.5px solid ${s.status==="done"?C.line:C.gold}`,borderRadius:12,
+        padding:"16px 18px",opacity:s.status==="done"?0.65:1}},
+        e("div",{style:{display:"flex",justifyContent:"space-between",gap:10,
+          flexWrap:"wrap",alignItems:"baseline"}},
+          e("div",{style:{fontSize:18,fontWeight:"bold",color:C.gold}},"“"+s.talk+"”"),
+          e("div",{style:{fontSize:12,color:C.src}},fmtDate(s.createdAt))),
+        (s.speaker||s.session)&&e("div",{style:{fontSize:14,color:C.text,marginTop:3}},
+          [s.speaker,s.session].filter(Boolean).join(" · ")),
+        s.note&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:8,lineHeight:1.5,
+          fontStyle:"italic"}},"“"+s.note+"”"),
+        s.from&&e("div",{style:{fontSize:13,color:C.src,marginTop:6}},"— "+s.from),
+        e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:12,alignItems:"center"}},
+          s.talkUrl&&e("a",{href:s.talkUrl,target:"_blank",rel:"noopener noreferrer",
+            style:{fontSize:13,color:C.blue}},"Open talk →"),
+          s.status!=="done"
+            ? e("button",{onClick:()=>act("resolve",s.id,"done"),
+                style:{padding:"6px 14px",fontSize:13,borderRadius:8,border:0,
+                  background:C.blue,color:"#0A1628"}},"✓ Mark done")
+            : e("button",{onClick:()=>act("resolve",s.id,"new"),
+                style:{padding:"6px 14px",fontSize:13,borderRadius:8,
+                  border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
+                "Reopen"),
+          e("button",{onClick:()=>{if(window.confirm("Delete this suggestion?"))act("delete",s.id);},
+            style:{padding:"6px 12px",fontSize:13,borderRadius:8,marginLeft:"auto",
+              border:`1.5px solid #7A4A48`,background:"transparent",color:"#E66A5C"}},
+            "Delete")))),
+    ),
   );
 }
 
@@ -1308,6 +1396,7 @@ function App(){
     tab==="library"&&e(Library,{songs,loading,error,onReload:load,focusId:songParam}),
     tab==="concert"&&e(ConcertBuilder,{songs,loading}),
     tab==="suggest"&&e(Suggest),
+    tab==="inbox"&&e(SuggestionsInbox),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();}}),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
       borderTop:`1px solid ${C.line}`,background:C.paper}},
