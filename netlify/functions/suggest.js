@@ -16,6 +16,7 @@ const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim())
 const publicView = (s) => ({
   id: s.id, talk: s.talk, speaker: s.speaker, session: s.session,
   talkUrl: s.talkUrl, note: s.note, from: s.from, createdAt: s.createdAt,
+  lyricStyle: s.lyricStyle, genre: s.genre, mood: s.mood,
   wants: Array.isArray(s.voters) ? s.voters.length : 0,
 });
 
@@ -100,6 +101,9 @@ exports.handler = async (event) => {
     speaker: clip(body.speaker, 120),
     session: clip(body.session, 80),
     talkUrl: clip(body.talkUrl, 500),
+    lyricStyle: clip(body.lyricStyle, 120),
+    genre: clip(body.genre, 60),
+    mood:  clip(body.mood, 60),
     note:    clip(body.note, 600),
     from:    clip(body.from, 80),
     createdAt: new Date().toISOString(),

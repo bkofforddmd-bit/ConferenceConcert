@@ -84,6 +84,13 @@ function ytId(url){if(!url)return null;
   const m=url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);return m?m[1]:null;}
 const PREVIEW_SECONDS=20;
 
+/* Suggestion-form options for genre and mood pickers (free-text style stays open). */
+const GENRES=["","Acoustic / Singer-songwriter","Pop","Folk","Country","Jazz / Swing",
+  "Soul / R&B","Gospel / Worship","Hymn / Sacred","Ballad","Rock","Indie",
+  "Orchestral / Cinematic","Piano / Instrumental","Americana","Other"];
+const MOODS=["","Hopeful","Reflective","Joyful","Peaceful","Reverent","Triumphant",
+  "Tender","Uplifting","Longing","Celebratory","Comforting","Energetic","Other"];
+
 /* Small localStorage helpers (this is a deployed site, so localStorage is available).
    Used to remember the voter's email and which suggestions they've voted for. */
 function localStorage_get(k){try{return localStorage.getItem(k)||"";}catch(_){return"";}}
@@ -633,6 +640,11 @@ function Suggest(){
             e("div",{style:{fontSize:17,fontWeight:"bold",color:C.gold}},"“"+s.talk+"”"),
             (s.speaker||s.session)&&e("div",{style:{fontSize:13,color:C.text,marginTop:2}},
               [s.speaker,s.session].filter(Boolean).join(" · ")),
+            (s.lyricStyle||s.genre||s.mood)&&e("div",{style:{display:"flex",gap:6,
+              flexWrap:"wrap",marginTop:8}},
+              [s.lyricStyle,s.genre,s.mood].filter(Boolean).map((x,xi)=>
+                e("span",{key:xi,style:{fontSize:11,padding:"2px 9px",borderRadius:10,
+                  background:"#22375E",color:C.src}},x))),
             s.note&&e("div",{style:{fontSize:13,color:C.src,marginTop:6,fontStyle:"italic",
               lineHeight:1.5}},"“"+s.note+"”"),
             e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:12,alignItems:"center"}},
@@ -654,7 +666,8 @@ function Suggest(){
 
 /* The suggest-a-talk form, shown when "+ Suggest a talk" is open. */
 function SuggestForm({onSent}){
-  const [f,setF]=useState({talk:"",speaker:"",session:"",talkUrl:"",note:"",from:""});
+  const [f,setF]=useState({talk:"",speaker:"",session:"",talkUrl:"",
+    lyricStyle:"",genre:"",mood:"",note:"",from:""});
   const [state,setState]=useState("idle");
   const [msg,setMsg]=useState("");
   const up=(k)=>(ev)=>setF({...f,[k]:ev.target.value});
@@ -694,6 +707,20 @@ function SuggestForm({onSent}){
       e("div",null,e("label",{style:lbl,htmlFor:"s-url"},"Link to the talk (optional)"),
         e("input",{id:"s-url",style:field,value:f.talkUrl,onChange:up("talkUrl"),
           placeholder:"Paste the churchofjesuschrist.org link if you have it"})),
+      e("div",{style:{borderTop:`1px solid ${C.line}`,paddingTop:14}},
+        e("div",{style:{fontSize:13,color:C.gold,letterSpacing:"0.04em",marginBottom:10,
+          fontWeight:"bold"}},"Musical ideas (optional)"),
+        e("div",{style:{display:"flex",flexDirection:"column",gap:14}},
+          e("div",null,e("label",{style:lbl,htmlFor:"s-style"},"Lyric style"),
+            e("input",{id:"s-style",style:field,value:f.lyricStyle,onChange:up("lyricStyle"),
+              placeholder:"e.g. after Nat King Cole"})),
+          e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+            e("div",{style:{flex:"1 1 160px"}},e("label",{style:lbl,htmlFor:"s-genre"},"Genre"),
+              e("select",{id:"s-genre",style:field,value:f.genre,onChange:up("genre")},
+                GENRES.map(g=>e("option",{key:g,value:g},g||"— pick a genre —")))),
+            e("div",{style:{flex:"1 1 160px"}},e("label",{style:lbl,htmlFor:"s-mood"},"Mood"),
+              e("select",{id:"s-mood",style:field,value:f.mood,onChange:up("mood")},
+                MOODS.map(m=>e("option",{key:m,value:m},m||"— pick a mood —"))))))),
       e("div",null,e("label",{style:lbl,htmlFor:"s-note"},"Why this one? (optional)"),
         e("textarea",{id:"s-note",style:{...field,minHeight:80,resize:"vertical"},
           value:f.note,onChange:up("note"),
@@ -778,6 +805,11 @@ function SuggestionsInbox(){
             ((Array.isArray(s.voters)?s.voters.length:0)===1?"want":"wants"))),
         (s.speaker||s.session)&&e("div",{style:{fontSize:14,color:C.text,marginTop:6}},
           [s.speaker,s.session].filter(Boolean).join(" · ")),
+        (s.lyricStyle||s.genre||s.mood)&&e("div",{style:{display:"flex",gap:6,
+          flexWrap:"wrap",marginTop:8}},
+          [s.lyricStyle,s.genre,s.mood].filter(Boolean).map((x,xi)=>
+            e("span",{key:xi,style:{fontSize:11,padding:"2px 9px",borderRadius:10,
+              background:"#22375E",color:C.src}},x))),
         s.note&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:8,lineHeight:1.5,
           fontStyle:"italic"}},"“"+s.note+"”"),
         s.from&&e("div",{style:{fontSize:13,color:C.src,marginTop:6}},"— "+s.from),
