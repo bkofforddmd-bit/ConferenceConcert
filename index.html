@@ -85,20 +85,21 @@ function ytId(url){if(!url)return null;
 const PREVIEW_SECONDS=20;
 
 /* Share a link via the phone's native share sheet, falling back to copy on desktop.
-   Returns a short status string the caller can show briefly. */
+   The URL is also appended to the text, because some apps (notably email) keep only
+   one field — this guarantees the link travels no matter the channel. */
 async function shareLink(title,text,url){
+  const combined=text?(text+"\n"+url):url;
   try{
     if(navigator.share){
-      await navigator.share({title,text,url});
+      await navigator.share({title,text:combined,url});
       return "shared";
     }
   }catch(err){
     if(err&&err.name==="AbortError")return "cancelled"; // user dismissed the sheet
   }
   try{
-    if(navigator.clipboard){ await navigator.clipboard.writeText(url); return "copied"; }
+    if(navigator.clipboard){ await navigator.clipboard.writeText(combined); return "copied"; }
   }catch(_){}
-  // Last-ditch fallback
   try{ window.prompt("Copy this link:",url); }catch(_){}
   return "copied";
 }
@@ -234,8 +235,8 @@ function Player({song}){
       song.audioUrl&&e(PreviewButton,{song}),
       e(ShareButton,{small:true,label:"Share song",
         title:"Conference as a Concert",
-        text:"♪ “"+song.title+"”"+(song.talk?" — from “"+song.talk+"”":"")+" on Conference as a Concert",
-        url:location.origin+location.pathname})),
+        url:location.origin+location.pathname+"?song="+encodeURIComponent(song.id),
+        text:"♪ “"+song.title+"”"+(song.talk?" — from “"+song.talk+"”":"")+" on Conference as a Concert"})),
   );
 }
 
@@ -307,7 +308,7 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
   const vid=ytId(song.youtube);
   const badge=vid?"▶ Video":(song.audioUrl?"♪ Audio":"Coming soon");
   const badgeColor=vid?C.blue:(song.audioUrl?C.src:"#6B7FA3");
-  return e("div",{style:{background:open?C.paper:"#1E3358",borderRadius:12,
+  return e("div",{id:"song-"+song.id,style:{background:open?C.paper:"#1E3358",borderRadius:12,
     border:`1.5px solid ${open?C.gold:C.line}`,
     boxShadow:open?"0 6px 20px rgba(44,26,14,.12)":"0 1px 3px rgba(44,26,14,.06)",
     overflow:"hidden",transition:"border-color .15s,box-shadow .15s"}},
@@ -338,11 +339,19 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
 }
 
 /* ---------------------------------------------------------- Library */
-function Library({songs,loading,error,onReload}){
+function Library({songs,loading,error,onReload,focusId}){
   const [group,setGroup]=useState("session");
   const [query,setQuery]=useState("");
   const [openId,setOpenId]=useState(null);
   const canEdit=!!sessionStorage.getItem("cac_pw");
+  // Open a song that was deep-linked via ?song=ID, once songs have loaded.
+  useEffect(()=>{
+    if(focusId&&songs.some(s=>s.id===focusId)){
+      setOpenId(focusId);
+      setTimeout(()=>{const el=document.getElementById("song-"+focusId);
+        if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},300);
+    }
+  },[focusId,songs]);
   const filtered=useMemo(()=>{
     const q=query.trim().toLowerCase();
     if(!q)return songs;
@@ -1220,6 +1229,7 @@ function ConcertPlayer({id}){
 /* --------------------------------------------------------------- App */
 function App(){
   const concertId=new URLSearchParams(location.search).get("concert");
+  const songParam=new URLSearchParams(location.search).get("song");
   const [tab,setTab]=useState("library");
   const [songs,setSongs]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -1247,7 +1257,7 @@ function App(){
 
   return e("div",null,
     e(Header,{tab,setTab}),
-    tab==="library"&&e(Library,{songs,loading,error,onReload:load}),
+    tab==="library"&&e(Library,{songs,loading,error,onReload:load,focusId:songParam}),
     tab==="concert"&&e(ConcertBuilder,{songs,loading}),
     tab==="suggest"&&e(Suggest),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();}}),
