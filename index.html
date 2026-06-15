@@ -1767,6 +1767,92 @@ function ConcertPlayer({id}){
 }
 
 /* --------------------------------------------------------------- App */
+/* ----------------------------------------------- Install to home screen */
+/* Captures Chrome's install prompt for true one-tap install; otherwise shows
+   device-specific steps (iPhone must use Safari's Share → Add to Home Screen). */
+let _deferredInstall=null;
+if(typeof window!=="undefined"){
+  window.addEventListener("beforeinstallprompt",(ev)=>{
+    ev.preventDefault(); _deferredInstall=ev;
+    window.dispatchEvent(new Event("cac-install-available"));
+  });
+}
+function InstallHelper(){
+  const [canPrompt,setCanPrompt]=useState(!!_deferredInstall);
+  const [show,setShow]=useState(false);
+  const [installed,setInstalled]=useState(false);
+  useEffect(()=>{
+    const onAvail=()=>setCanPrompt(true);
+    const onInstalled=()=>{setInstalled(true);setShow(false);};
+    window.addEventListener("cac-install-available",onAvail);
+    window.addEventListener("appinstalled",onInstalled);
+    // Already running as an installed app? Then hide the button.
+    if(window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)setInstalled(true);
+    if(window.navigator&&window.navigator.standalone)setInstalled(true);
+    return ()=>{window.removeEventListener("cac-install-available",onAvail);
+      window.removeEventListener("appinstalled",onInstalled);};
+  },[]);
+  if(installed)return null;
+
+  const ua=(typeof navigator!=="undefined"?navigator.userAgent:"")||"";
+  const isIOS=/iphone|ipad|ipod/i.test(ua);
+  const isAndroid=/android/i.test(ua);
+
+  async function clickInstall(){
+    if(_deferredInstall){
+      _deferredInstall.prompt();
+      try{await _deferredInstall.userChoice;}catch(_){}
+      _deferredInstall=null;setCanPrompt(false);
+      return;
+    }
+    setShow(true); // no native prompt available -> show steps
+  }
+
+  const steps=isIOS
+    ? [["1","Tap the Share button",
+        "It's the square with an arrow pointing up — at the bottom center of Safari. (You must use Safari on iPhone, not Chrome.)"],
+       ["2","Choose “Add to Home Screen”","Scroll down the share menu to find it."],
+       ["3","Tap “Add”","Top-right corner. The icon appears on your home screen."]]
+    : isAndroid
+    ? [["1","Open the Chrome menu","The three dots ⋮ in the top-right corner."],
+       ["2","Tap “Install app” / “Add to Home screen”","Either wording may appear."],
+       ["3","Confirm","The icon lands on your home screen and opens full-screen."]]
+    : [["1","Open this site on your phone","Use Safari on iPhone, or Chrome on Android."],
+       ["2","Open the browser menu","iPhone: the Share button. Android: the ⋮ menu."],
+       ["3","Add to Home Screen","Tap it, confirm, and the app installs."]];
+
+  const modal=show&&e("div",{onClick:()=>setShow(false),
+    style:{position:"fixed",inset:0,background:"rgba(5,12,24,.75)",zIndex:60,
+      display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}},
+    e("div",{onClick:ev=>ev.stopPropagation(),
+      style:{background:C.paper,border:`1.5px solid ${C.gold}`,borderRadius:14,
+        padding:"24px",maxWidth:440,width:"100%"}},
+      e("div",{style:{fontSize:20,fontWeight:"bold",color:C.gold,marginBottom:6}},
+        "Add to your home screen"),
+      e("p",{style:{fontSize:13.5,color:C.src,lineHeight:1.5,marginTop:0,marginBottom:16}},
+        "This puts the app on your phone like a regular app — full-screen, with its own icon. There's no download or app store; it installs right from your browser."),
+      e("div",{style:{display:"flex",flexDirection:"column",gap:14}},
+        steps.map(([n,title,desc])=>e("div",{key:n,style:{display:"flex",gap:12}},
+          e("div",{style:{minWidth:30,height:30,borderRadius:"50%",background:C.gold,
+            color:"#0A1628",fontWeight:"bold",display:"flex",alignItems:"center",
+            justifyContent:"center",fontSize:15}},n),
+          e("div",null,
+            e("div",{style:{fontWeight:"bold",color:C.text,fontSize:15}},title),
+            e("div",{style:{fontSize:13,color:C.src,lineHeight:1.5,marginTop:2}},desc))))),
+      isIOS&&e("div",{style:{marginTop:16,padding:"10px 12px",borderRadius:8,
+        background:"#1E3358",fontSize:12.5,color:C.src,lineHeight:1.5}},
+        "On iPhone this only works in Safari — Apple doesn't allow other browsers to add to the home screen."),
+      e("button",{onClick:()=>setShow(false),
+        style:{marginTop:18,padding:"10px 20px",fontSize:14,borderRadius:8,border:0,
+          background:C.blue,color:"#0A1628",fontWeight:"bold"}},"Got it")));
+
+  return e("span",null,modal,
+    e("button",{onClick:clickInstall,
+      style:{padding:"9px 18px",fontSize:14,borderRadius:8,border:0,
+        background:C.gold,color:"#0A1628",fontWeight:"bold"}},
+      canPrompt?"⤓ Install app":"⤓ Add to home screen"));
+}
+
 function App(){
   const concertId=new URLSearchParams(location.search).get("concert");
   const songParam=new URLSearchParams(location.search).get("song");
@@ -1807,7 +1893,9 @@ function App(){
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();},onBandChange}),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
       borderTop:`1px solid ${C.line}`,background:C.paper}},
-      e("div",{style:{marginBottom:14}},
+      e("div",{style:{marginBottom:14,display:"flex",gap:10,justifyContent:"center",
+        flexWrap:"wrap"}},
+        e(InstallHelper),
         e(ShareButton,{label:"Share the app",
           title:"Conference as a Concert",
           text:"🎶 Conference as a Concert — General Conference talks set to music. Stream songs and build your own concert:",
