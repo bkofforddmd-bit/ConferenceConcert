@@ -104,6 +104,16 @@ function mark_voted(id){
     localStorage.setItem("cac_voted",JSON.stringify([...s]));}catch(_){}
 }
 
+/* Build a mailto: link that opens the band's own email app pre-filled.
+   Recipients go in BCC to keep everyone's address private from each other. */
+function buildMailto(recipients,subject,body){
+  const bcc=(recipients||[]).filter(Boolean).join(",");
+  const q="?bcc="+encodeURIComponent(bcc)+
+    "&subject="+encodeURIComponent(subject)+
+    "&body="+encodeURIComponent(body);
+  return "mailto:"+q;
+}
+
 /* Share a link via the phone's native share sheet, falling back to copy on desktop.
    The URL is also appended to the text, because some apps (notably email) keep only
    one field — this guarantees the link travels no matter the channel. */
@@ -250,7 +260,7 @@ function ScrollingLyrics({audioRef,lyrics,height,delay,endBuffer}){
   const boxRef=React.useRef(null);
   const innerRef=React.useRef(null);
   const lead=(delay==null?35:Math.max(0,delay));        // seconds to hold before scrolling
-  const tailSecs=(endBuffer==null?20:Math.max(0,endBuffer)); // finish this many seconds before the end
+  const tailSecs=(endBuffer==null?30:Math.max(0,endBuffer)); // finish this many seconds before the end
   useEffect(()=>{
     if(!lyrics)return;
     let raf;
@@ -306,7 +316,7 @@ function Player({song}){
       e("audio",{ref:audioRef,controls:true,preload:"none",src:song.audioUrl,style:{width:"100%"}}),
       song.lyrics&&e(ScrollingLyrics,{audioRef,lyrics:song.lyrics,
         delay:song.lyricsDelay==null?35:song.lyricsDelay,
-        endBuffer:song.lyricsEnd==null?20:song.lyricsEnd})),
+        endBuffer:song.lyricsEnd==null?30:song.lyricsEnd})),
     mode==="none"&&e("div",{style:{padding:"26px 16px",textAlign:"center",color:C.src,
       background:C.cream,borderRadius:8,fontStyle:"italic"}},
       "This song isn't streaming yet — check back soon."),
@@ -567,7 +577,7 @@ function SongEditor({song,onDone}){
             placeholder:"35"})),
         e("div",half,e("label",{style:lbl},"Lyrics finish early (sec)"),
           e("input",{type:"number",min:"0",style:field,value:f.lyricsEnd,onChange:up("lyricsEnd"),
-            placeholder:"20"}))),
+            placeholder:"30"}))),
       e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
         e("div",{style:{flex:"1 1 240px"}},e("label",{style:lbl},"Talk URL"),
           e("input",{style:field,value:f.talkUrl,onChange:up("talkUrl")})),
@@ -717,7 +727,7 @@ function Suggest(){
 /* The suggest-a-talk form, shown when "+ Suggest a talk" is open. */
 function SuggestForm({onSent}){
   const [f,setF]=useState({talk:"",speaker:"",session:"",talkUrl:"",
-    lyricStyle:"",genre:"",mood:"",note:"",from:""});
+    lyricStyle:"",genre:"",mood:"",note:"",from:"",email:""});
   const [state,setState]=useState("idle");
   const [msg,setMsg]=useState("");
   const up=(k)=>(ev)=>setF({...f,[k]:ev.target.value});
@@ -775,9 +785,13 @@ function SuggestForm({onSent}){
         e("textarea",{id:"s-note",style:{...field,minHeight:80,resize:"vertical"},
           value:f.note,onChange:up("note"),
           placeholder:"A line, a theme, a moment that moved you…"})),
-      e("div",null,e("label",{style:lbl,htmlFor:"s-from"},"Your name (optional)"),
-        e("input",{id:"s-from",style:field,value:f.from,onChange:up("from"),
-          placeholder:"So we can thank you"})),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 200px"}},e("label",{style:lbl,htmlFor:"s-from"},"Your name (optional)"),
+          e("input",{id:"s-from",style:field,value:f.from,onChange:up("from"),
+            placeholder:"So we can thank you"})),
+        e("div",{style:{flex:"1 1 200px"}},e("label",{style:lbl,htmlFor:"s-email"},"Your email (optional)"),
+          e("input",{id:"s-email",type:"email",style:field,value:f.email,onChange:up("email"),
+            placeholder:"To hear when it's posted & made"}))),
       state==="error"&&e("p",{style:{color:"#E66A5C",margin:0}},msg),
       e("button",{onClick:submit,disabled:state==="sending",
         style:{padding:"12px 24px",fontSize:15,borderRadius:8,border:0,
@@ -890,7 +904,43 @@ function SuggestionsInbox(){
           e("button",{onClick:()=>{if(window.confirm("Delete this suggestion?"))act("delete",s.id);},
             style:{padding:"6px 12px",fontSize:13,borderRadius:8,marginLeft:"auto",
               border:`1.5px solid #7A4A48`,background:"transparent",color:"#E66A5C"}},
-            "Delete")))),
+            "Delete")),
+        (()=>{
+          const recipients=[s.email,...(Array.isArray(s.voters)?s.voters:[])].filter(Boolean);
+          const appUrl=location.origin+location.pathname;
+          if(recipients.length===0)return e("div",{style:{fontSize:12,color:C.src,
+            marginTop:10,fontStyle:"italic"}},
+            "No emails on file for this suggestion yet — nothing to send.");
+          const thankSubject="Your talk suggestion is on the board! — Conference as a Concert";
+          const thankBody=
+            "Hi there,\n\n"+
+            "Thank you for your interest in “"+s.talk+"” on Conference as a Concert! "+
+            "We're grateful you took the time to suggest it"+
+            (recipients.length>1?" (and to everyone who wanted it too).":".")+"\n\n"+
+            "It's now posted on our suggestions board, where people can vote for it. "+
+            "Come add your voice and rally others:\n"+appUrl+"\n\n"+
+            "With gratitude,\nY-Mountain Music Co.";
+          const readySubject="“"+s.talk+"” is now a song! — Conference as a Concert";
+          const readyBody=
+            "Hi there,\n\n"+
+            "Wonderful news — the talk you were interested in, “"+s.talk+"”, "+
+            "has been turned into a song and is now in our library!\n\n"+
+            "Have a listen here:\n"+appUrl+"\n\n"+
+            "Thank you for being part of this. We hope it blesses you.\n\n"+
+            "With gratitude,\nY-Mountain Music Co.";
+          return e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:10,
+            paddingTop:10,borderTop:`1px solid ${C.line}`,alignItems:"center"}},
+            e("span",{style:{fontSize:12,color:C.src}},
+              recipients.length+" recipient"+(recipients.length===1?"":"s")+":"),
+            e("a",{href:buildMailto(recipients,thankSubject,thankBody),
+              style:{padding:"6px 14px",fontSize:13,borderRadius:8,textDecoration:"none",
+                border:`1.5px solid ${C.gold}`,background:"transparent",color:C.gold,
+                fontWeight:"bold"}},"✉️ Thank for suggesting"),
+            e("a",{href:buildMailto(recipients,readySubject,readyBody),
+              style:{padding:"6px 14px",fontSize:13,borderRadius:8,textDecoration:"none",
+                border:`1.5px solid ${C.blue}`,background:"transparent",color:C.blue,
+                fontWeight:"bold"}},"✉️ Notify: song is ready"));
+        })())),
     ),
   );
 }
@@ -1174,7 +1224,7 @@ function Band({onAdded,onBandChange}){
         e("div",{style:{flex:"1 1 200px"}},
           e("label",{style:lbl,htmlFor:"b-lyrend"},"Finish before end (seconds)"),
           e("input",{id:"b-lyrend",type:"number",min:"0",style:field,value:s.lyricsEnd,
-            onChange:up("lyricsEnd"),placeholder:"20 — end this early"}))),
+            onChange:up("lyricsEnd"),placeholder:"30 — end this early"}))),
       e("div",null,e("label",{style:lbl,htmlFor:"b-blurb"},"Blurb"),
         e("textarea",{id:"b-blurb",style:{...field,minHeight:70,resize:"vertical"},
           value:s.blurb,onChange:up("blurb"),placeholder:"One line about the song."})),
@@ -1602,7 +1652,7 @@ function ConcertPlayer({id}){
                       onEnded:next}),
                     current.lyrics&&e(ScrollingLyrics,{audioRef,lyrics:current.lyrics,height:240,
                       delay:current.lyricsDelay==null?35:current.lyricsDelay,
-                      endBuffer:current.lyricsEnd==null?20:current.lyricsEnd}))
+                      endBuffer:current.lyricsEnd==null?30:current.lyricsEnd}))
                 : e("div",{style:{padding:"20px",textAlign:"center",color:C.src,
                     fontStyle:"italic",marginTop:14}},"(No media for this song yet)")),
 

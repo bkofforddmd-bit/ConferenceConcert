@@ -106,6 +106,7 @@ exports.handler = async (event) => {
     mood:  clip(body.mood, 60),
     note:    clip(body.note, 600),
     from:    clip(body.from, 80),
+    email:   clip(body.email, 160),
     createdAt: new Date().toISOString(),
     status: "new",
     approved: false,
