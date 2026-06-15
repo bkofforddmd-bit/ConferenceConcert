@@ -106,16 +106,25 @@ function mark_voted(id){
 
 const BAND_EMAIL="conferenceasaconcert@gmail.com";
 
-/* Build a mailto: link that opens the band's own email app pre-filled.
-   Addressed TO the band address with the suggester+voters in BCC, so (a) the
-   link is well-formed (a bare "mailto:?bcc=" is ignored by many mail handlers)
-   and (b) recipients can't see each other's addresses. */
+/* Build a mailto: link (kept as a fallback for phones / non-Gmail users). */
 function buildMailto(recipients,subject,body){
   const bcc=(recipients||[]).filter(Boolean).join(",");
   const q="?bcc="+encodeURIComponent(bcc)+
     "&subject="+encodeURIComponent(subject)+
     "&body="+encodeURIComponent(body);
   return "mailto:"+encodeURIComponent(BAND_EMAIL)+q;
+}
+
+/* Build a Gmail compose URL that opens Gmail's own compose window with the To,
+   Bcc, Subject, and body already filled in. This is a normal web link to Gmail,
+   so the browser always opens it — no mail-app handler setup needed. */
+function buildGmailCompose(recipients,subject,body){
+  const bcc=(recipients||[]).filter(Boolean).join(",");
+  return "https://mail.google.com/mail/?view=cm&fs=1"+
+    "&to="+encodeURIComponent(BAND_EMAIL)+
+    "&bcc="+encodeURIComponent(bcc)+
+    "&su="+encodeURIComponent(subject)+
+    "&body="+encodeURIComponent(body);
 }
 
 /* Share a link via the phone's native share sheet, falling back to copy on desktop.
@@ -932,41 +941,38 @@ function SuggestionsInbox(){
             "Have a listen here:\n"+appUrl+"\n\n"+
             "Thank you for being part of this. We hope it blesses you.\n\n"+
             "With gratitude,\nY-Mountain Music Co.";
-          const openMail=(subject,bodyText)=>{
-            const link=buildMailto(recipients,subject,bodyText);
-            // Try the user's mail app. If no handler is set (common on desktop),
-            // nothing visibly happens, so we also offer a copy fallback button.
-            window.location.href=link;
-          };
           const copyAll=(subject,bodyText)=>{
             const blob="To: "+BAND_EMAIL+"\nBcc: "+recipients.join(", ")+
               "\nSubject: "+subject+"\n\n"+bodyText;
             if(navigator.clipboard)navigator.clipboard.writeText(blob);
-            window.alert("Copied the recipients and message to your clipboard — paste it into a new email if your email app didn't open.");
+            window.alert("Copied — paste into a new email if you'd rather not use Gmail.");
           };
           return e("div",{style:{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.line}`}},
             e("div",{style:{fontSize:12,color:C.src,marginBottom:8}},
               recipients.length+" recipient"+(recipients.length===1?"":"s")+
               " — addressed to "+BAND_EMAIL+", everyone in BCC"),
             e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
-              e("a",{href:buildMailto(recipients,thankSubject,thankBody),
+              e("a",{href:buildGmailCompose(recipients,thankSubject,thankBody),
+                target:"_blank",rel:"noopener noreferrer",
                 style:{padding:"6px 14px",fontSize:13,borderRadius:8,textDecoration:"none",
                   border:`1.5px solid ${C.gold}`,background:"transparent",color:C.gold,
                   fontWeight:"bold"}},"✉️ Thank for suggesting"),
-              e("button",{onClick:()=>copyAll(thankSubject,thankBody),
-                style:{padding:"6px 10px",fontSize:12,borderRadius:8,
-                  border:`1px solid ${C.line}`,background:"transparent",color:C.src}},
-                "copy"),
-              e("a",{href:buildMailto(recipients,readySubject,readyBody),
+              e("a",{href:buildGmailCompose(recipients,readySubject,readyBody),
+                target:"_blank",rel:"noopener noreferrer",
                 style:{padding:"6px 14px",fontSize:13,borderRadius:8,textDecoration:"none",
                   border:`1.5px solid ${C.blue}`,background:"transparent",color:C.blue,
-                  fontWeight:"bold"}},"✉️ Notify: song is ready"),
-              e("button",{onClick:()=>copyAll(readySubject,readyBody),
-                style:{padding:"6px 10px",fontSize:12,borderRadius:8,
+                  fontWeight:"bold"}},"✉️ Notify: song is ready")),
+            e("div",{style:{display:"flex",gap:14,marginTop:8,alignItems:"center"}},
+              e("span",{style:{fontSize:11,color:C.src,fontStyle:"italic"}},
+                "Opens a Gmail compose window, ready to send."),
+              e("button",{onClick:()=>copyAll(thankSubject,thankBody),
+                style:{padding:"3px 10px",fontSize:11,borderRadius:6,
                   border:`1px solid ${C.line}`,background:"transparent",color:C.src}},
-                "copy")),
-            e("div",{style:{fontSize:11,color:C.src,marginTop:8,fontStyle:"italic"}},
-              "If the ✉️ button doesn't open your email app (common on desktop without a default mail program), tap “copy” and paste into Gmail."));
+                "copy thank-you text"),
+              e("button",{onClick:()=>copyAll(readySubject,readyBody),
+                style:{padding:"3px 10px",fontSize:11,borderRadius:6,
+                  border:`1px solid ${C.line}`,background:"transparent",color:C.src}},
+                "copy ready text")));
         })())),
     ),
   );
