@@ -173,12 +173,19 @@ const CONCERT_MAX_SECONDS=2*60*60; // slider ceiling: 2 hours
 const CONCERT_DEFAULT_SECONDS=2*60*60; // default target
 
 /* Effective length of a song in seconds: measured/auto value if known, else band
-   duration, else a sensible default so totals stay meaningful. */
+   duration, else a sensible default so totals stay meaningful.
+   Durations are entered inconsistently — some in seconds (240), some in minutes
+   (4). A measured audio value is always true seconds and trusted as-is. A typed
+   value of 20 or less is implausibly short for a song in seconds, so it's read
+   as minutes; larger values are read as seconds. */
 function songSeconds(song,measured){
   const m=measured&&measured[song.id];
-  if(m&&m>0)return m;
+  if(m&&m>0)return m;            // measured audio = real seconds, trust it
   const d=parseInt(song.duration,10);
-  if(d>0)return d;
+  if(d>0){
+    if(d<=20)return d*60;        // small number = minutes (e.g. 4 → 240s)
+    return d;                    // otherwise seconds
+  }
   return 210; // ~3.5 min fallback when truly unknown
 }
 function fmtTime(total){
