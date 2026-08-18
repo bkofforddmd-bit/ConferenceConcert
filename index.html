@@ -910,14 +910,41 @@ function LyricsToggle({song,compact}){
       borderRadius:8,padding:"14px 16px",marginTop:8}},song.lyrics));
 }
 
-/* Compact talk + lyrics links for arc/set-list rows. */
-function RowLinks({song}){
-  if(!song.talkUrl&&!song.lyrics)return null;
-  return e("div",{style:{display:"flex",gap:10,alignItems:"center",marginTop:3}},
-    song.talkUrl&&e("a",{href:song.talkUrl,target:"_blank",rel:"noopener noreferrer",
-      onClick:ev=>ev.stopPropagation(),
-      style:{fontSize:12,color:C.blue}},"Talk →"),
-    song.lyrics&&e(LyricsToggle,{song,compact:true}));
+/* -------------------------------------------- Set-list / picker song row */
+/* Phone-first row. The title and its talk stay on top where they can always
+   be read; the buttons that DO something (preview, add, remove) sit directly
+   under the title; the quieter Talk/Lyrics links tuck against the right edge.
+   Nothing here is white-space:nowrap, so a long title wraps instead of pushing
+   the row — and the whole page — sideways on a phone. */
+function SongRow({song,sub,bg,lead,actions,trailing}){
+  const [openLyrics,setOpenLyrics]=useState(false);
+  const link={fontSize:12,color:C.blue,background:"transparent",border:0,padding:0,
+    fontFamily:"inherit",textDecoration:"none",whiteSpace:"nowrap",cursor:"pointer"};
+  const hasSide=song.talkUrl||song.lyrics||trailing;
+  return e("div",{style:{background:bg||C.paper,border:`1.5px solid ${C.line}`,
+    borderRadius:10,padding:"10px 12px"}},
+    e("div",{style:{display:"flex",alignItems:"flex-start",gap:10}},
+      lead||null,
+      e("div",{style:{flex:1,minWidth:0}},
+        e("div",{style:{fontWeight:"bold",color:C.gold,fontSize:15,
+          overflowWrap:"anywhere"}},song.title),
+        sub&&e("div",{style:{fontSize:12,color:C.src,fontStyle:"italic",marginTop:2,
+          overflowWrap:"anywhere"}},sub),
+        actions&&e("div",{style:{display:"flex",flexWrap:"wrap",alignItems:"center",
+          gap:8,marginTop:8}},actions)),
+      hasSide&&e("div",{style:{display:"flex",flexDirection:"column",alignItems:"flex-end",
+        gap:7,flexShrink:0}},
+        trailing||null,
+        song.talkUrl&&e("a",{href:song.talkUrl,target:"_blank",rel:"noopener noreferrer",
+          onClick:ev=>ev.stopPropagation(),style:link},"Talk →"),
+        song.lyrics&&e("button",{onClick:ev=>{ev.stopPropagation();setOpenLyrics(!openLyrics);},
+          "aria-expanded":openLyrics,
+          style:{...link,color:openLyrics?C.gold:C.blue}},
+          openLyrics?"Hide lyrics":"♪ Lyrics"))),
+    openLyrics&&song.lyrics&&e("pre",{style:{whiteSpace:"pre-wrap",
+      fontFamily:"Georgia,serif",fontSize:14,lineHeight:1.55,color:C.text,
+      background:C.cream,border:`1px solid ${C.line}`,borderRadius:8,
+      padding:"14px 16px",marginTop:10}},song.lyrics));
 }
 
 /* ------------------------------------------------------- Share button */
@@ -2825,29 +2852,25 @@ function ConcertBuilder({songs,loading}){
     e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic"}},"Loading songs…"));
 
   // A small reusable row for a picked song.
-  const pickedRow=(p,i)=>e("div",{key:p.id,
-    style:{display:"flex",alignItems:"center",gap:10,background:C.paper,
-      border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 12px"}},
-    e("div",{style:{display:"flex",flexDirection:"column",gap:2}},
-      e("button",{onClick:()=>move(p.id,-1),disabled:i===0,"aria-label":"Move up",
-        style:{border:0,background:"transparent",color:i===0?"#5A78A8":C.src,
-          fontSize:14,cursor:i===0?"default":"pointer",lineHeight:1}},"▲"),
-      e("button",{onClick:()=>move(p.id,1),disabled:i===pickedSongs.length-1,
-        "aria-label":"Move down",
-        style:{border:0,background:"transparent",
-          color:i===pickedSongs.length-1?"#5A78A8":C.src,
-          fontSize:14,cursor:i===pickedSongs.length-1?"default":"pointer",lineHeight:1}},"▼")),
-    e("span",{style:{color:C.gold,fontWeight:"bold",width:20,textAlign:"right"}},i+1),
-    e("div",{style:{flex:1,minWidth:0}},
-      e("div",{style:{fontWeight:"bold",color:C.gold,fontSize:15}},p.song.title),
-      e("div",{style:{fontSize:12,color:C.src,fontStyle:"italic",
-        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
-        (p.song.talk?p.song.talk+" · ":"")+fmtTime(songSeconds(p.song,measured))
-        +(measured[p.song.id]||p.song.duration>0?"":" (est.)")),
-      e(RowLinks,{song:p.song})),
-    e(PreviewButton,{song:p.song,small:true}),
-    e("button",{onClick:()=>remove(p.id),"aria-label":"Remove",
-      style:{border:0,background:"transparent",color:"#E66A5C",fontSize:18,lineHeight:1}},"×"));
+  const pickedRow=(p,i)=>e(SongRow,{key:p.id,song:p.song,
+    sub:(p.song.talk?p.song.talk+" · ":"")+fmtTime(songSeconds(p.song,measured))
+      +(measured[p.song.id]||p.song.duration>0?"":" (est.)"),
+    lead:e("div",{style:{display:"flex",alignItems:"center",gap:4,flexShrink:0}},
+      e("div",{style:{display:"flex",flexDirection:"column",gap:2}},
+        e("button",{onClick:()=>move(p.id,-1),disabled:i===0,"aria-label":"Move up",
+          style:{border:0,background:"transparent",color:i===0?"#5A78A8":C.src,
+            fontSize:14,cursor:i===0?"default":"pointer",lineHeight:1}},"▲"),
+        e("button",{onClick:()=>move(p.id,1),disabled:i===pickedSongs.length-1,
+          "aria-label":"Move down",
+          style:{border:0,background:"transparent",
+            color:i===pickedSongs.length-1?"#5A78A8":C.src,
+            fontSize:14,cursor:i===pickedSongs.length-1?"default":"pointer",lineHeight:1}},"▼")),
+      e("span",{style:{color:C.gold,fontWeight:"bold",width:18,textAlign:"right"}},i+1)),
+    actions:[e(PreviewButton,{key:"prev",song:p.song,small:true}),
+      e("button",{key:"rm",onClick:()=>remove(p.id),
+        style:{padding:"3px 10px",fontSize:12,borderRadius:16,
+          border:`1.5px solid ${C.line}`,background:"transparent",color:"#E66A5C",
+          whiteSpace:"nowrap",cursor:"pointer"}},"× Remove")]});
 
   // Picker list (shared by free-add and per-section add).
   const picker=(section)=>e("div",{style:{display:"flex",flexDirection:"column",gap:8,
@@ -2855,21 +2878,14 @@ function ConcertBuilder({songs,loading}){
     available.length===0
       ? e("p",{style:{color:C.src,fontStyle:"italic"}},
           songs.length===0?"No songs in the library yet.":"Nothing left to add.")
-      : available.map(s=>e("div",{key:s.id,
-          style:{display:"flex",alignItems:"center",gap:10,background:"#1E3358",
-            border:`1.5px solid ${C.line}`,borderRadius:10,padding:"10px 12px"}},
-          e("div",{style:{flex:1,minWidth:0}},
-            e("div",{style:{fontWeight:"bold",color:C.gold,fontSize:15}},s.title),
-            e("div",{style:{fontSize:12,color:C.src,fontStyle:"italic",
-              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
-              (s.talk?"from “"+s.talk+"” · ":"")+fmtTime(songSeconds(s,measured))
-              +(measured[s.id]||s.duration>0?"":" (est.)")),
-            e(RowLinks,{song:s})),
-          e(PreviewButton,{song:s,small:true}),
-          e("button",{onClick:()=>add(s.id,section),disabled:atCap,
-            style:{padding:"6px 14px",fontSize:13,borderRadius:16,border:0,
-              background:atCap?"#2C467A":C.gold,color:"#0A1628",fontWeight:"bold",
-              whiteSpace:"nowrap",cursor:atCap?"default":"pointer"}},"+ Add"))));
+      : available.map(s=>e(SongRow,{key:s.id,song:s,bg:"#1E3358",
+          sub:(s.talk?"from “"+s.talk+"” · ":"")+fmtTime(songSeconds(s,measured))
+            +(measured[s.id]||s.duration>0?"":" (est.)"),
+          actions:[e(PreviewButton,{key:"prev",song:s,small:true}),
+            e("button",{key:"add",onClick:()=>add(s.id,section),disabled:atCap,
+              style:{padding:"6px 14px",fontSize:13,borderRadius:16,border:0,
+                background:atCap?"#2C467A":C.gold,color:"#0A1628",fontWeight:"bold",
+                whiteSpace:"nowrap",cursor:atCap?"default":"pointer"}},"+ Add")]})));
 
   const timeColor=overCap?"#E66A5C":(atCap?C.src:C.gold);
 
