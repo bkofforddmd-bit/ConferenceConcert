@@ -4222,6 +4222,148 @@ function ConcertMemory({songs,onBack}){
       onError:()=>setAudioNote("⚠ Couldn't load that clip — flip it again to retry.")}));
 }
 
+/* ── Prophet or Lyric? ──────────────────────────────────────────
+   One line at a time: is it straight from the General Conference talk,
+   or from the song written about it? The talk text is fetched through
+   the talk-text function (browsers can't reach the church site directly).
+   When a line appears in BOTH — the lyric quotes the talk word-for-word —
+   either answer counts, and the reveal says so. */
+function polNorm(s){return String(s||"").toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim();}
+function buildPolDeck(song,talkText){
+  const seenL=new Set();const lyricLines=[];
+  song.lyrics.split("\n").forEach(l=>{const t=l.trim();
+    if(!lyricLineOk(t)||t.length>160)return;
+    const n=polNorm(t);if(seenL.has(n))return;seenL.add(n);lyricLines.push(t);});
+  const flat=talkText.split(/\n+/).join(" ");
+  const talkNorm=polNorm(flat);
+  const seenS=new Set();const sentences=[];
+  (flat.match(/[^.!?]{40,160}[.!?]/g)||[]).forEach(sRaw=>{const t=sRaw.trim();
+    if(t.split(/\s+/).length<7)return;
+    if(!/^[A-Z“"‘']/.test(t))return;
+    const n=polNorm(t);if(seenS.has(n))return;seenS.add(n);sentences.push(t);});
+  const lyricNormAll=polNorm(song.lyrics);
+  const lyricItems=shuffleArr(lyricLines).slice(0,6)
+    .map(t=>({text:t,origin:"lyric",both:talkNorm.indexOf(polNorm(t))!==-1}));
+  const talkItems=shuffleArr(sentences).slice(0,6)
+    .map(t=>({text:t,origin:"talk",both:lyricNormAll.indexOf(polNorm(t))!==-1}));
+  return shuffleArr(lyricItems.concat(talkItems));
+}
+
+function ProphetOrLyric({songs,onBack}){
+  const pool=useMemo(()=>songs.filter(s=>s.lyrics&&
+    s.lyrics.split("\n").filter(lyricLineOk).length>=4&&
+    isConferenceTalkUrl(s.talkUrl)),[songs]);
+  const [song,setSong]=useState(null);
+  const [phase,setPhase]=useState("pick");   // pick | loading | play | error
+  const [errMsg,setErrMsg]=useState("");
+  const [deck,setDeck]=useState([]);
+  const [idx,setIdx]=useState(0);
+  const [guess,setGuess]=useState(null);     // null until the room answers
+  const [score,setScore]=useState({right:0,total:0});
+  const talkTextRef=React.useRef("");
+
+  async function pickSong(s){
+    setSong(s);setPhase("loading");setErrMsg("");
+    try{
+      const r=await fetch(`${API}/talk-text`,{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({url:s.talkUrl})});
+      const d=await r.json().catch(()=>null);
+      if(!r.ok||!d||!d.text)throw new Error((d&&d.error)||"Couldn't load the talk.");
+      talkTextRef.current=d.text;
+      const dk=buildPolDeck(s,d.text);
+      if(dk.length<6)throw new Error("Not enough usable lines in this pairing — try another song.");
+      setDeck(dk);setIdx(0);setGuess(null);setScore({right:0,total:0});
+      setPhase("play");
+    }catch(err){setErrMsg((err&&err.message)||String(err));setPhase("error");}
+  }
+  function again(){
+    const dk=buildPolDeck(song,talkTextRef.current);
+    setDeck(dk);setIdx(0);setGuess(null);setScore({right:0,total:0});setPhase("play");
+  }
+  function answer(g){
+    if(guess!==null)return;
+    const it=deck[idx];
+    const correct=it.both||g===it.origin;
+    setGuess(g);
+    setScore(sc=>({right:sc.right+(correct?1:0),total:sc.total+1}));
+  }
+  const it=deck[idx];
+  const finished=phase==="play"&&guess!==null&&idx>=deck.length-1;
+  const answerBtn=(g,icon,label)=>{
+    const chosen=guess===g;
+    const showState=guess!==null;
+    const isRight=it&&(it.both||g===it.origin);
+    return e("button",{onClick:()=>answer(g),disabled:guess!==null,
+      style:{flex:"1 1 180px",maxWidth:280,padding:"16px 12px",borderRadius:12,
+        cursor:guess===null?"pointer":"default",fontFamily:"Georgia,serif",
+        fontSize:17,fontWeight:"bold",transition:"all .25s",
+        border:`2.5px solid ${showState?(isRight?"#3FA66A":chosen?"#E0524D":C.line):C.gold}`,
+        background:showState?(isRight?"rgba(63,166,106,.18)":chosen?"rgba(224,82,77,.15)":"transparent")
+          :"transparent",
+        color:showState?(isRight?"#7FD6A4":chosen?"#F0938F":C.src):C.gold}},
+      icon+" "+label);
+  };
+
+  let bodyEl;
+  if(phase==="pick"){
+    bodyEl=pool.length?e("div",null,
+      e("p",{style:{color:C.src,fontSize:14.5,lineHeight:1.6,marginBottom:16,textAlign:"center"}},
+        "A line appears — did the PROPHET say it in General Conference, or is it from the SONG written about the talk? Trickier than it sounds: the best lyrics borrow the prophet's own words."),
+      pool.map(s=>e("div",{key:s.id||s.title,onClick:()=>pickSong(s),
+        style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,
+          padding:"12px 14px",marginBottom:8,cursor:"pointer",textAlign:"left"}},
+        e("div",{style:{fontSize:16,fontWeight:"bold",color:C.text}},s.title),
+        e("div",{style:{fontSize:12.5,color:C.src,marginTop:2}},
+          (s.speaker||"")+(s.talk?"  ·  “"+s.talk+"”":"")))))
+    :e("p",{style:{color:C.src,fontSize:15,textAlign:"center"}},
+      "Needs songs with lyrics and a General Conference talk link — none yet.");
+  }else if(phase==="loading"){
+    bodyEl=e("div",{style:{textAlign:"center",padding:"40px 0"}},
+      e("div",{style:{fontSize:40,marginBottom:10}},"🕊"),
+      e("div",{style:{fontSize:16,color:C.src}},"Fetching the talk from the Church website…"));
+  }else if(phase==="error"){
+    bodyEl=e("div",{style:{textAlign:"center",padding:"30px 0"}},
+      e("p",{style:{color:C.gold,fontSize:15,marginBottom:16}},"⚠ "+errMsg),
+      e("button",{style:gameGhost,onClick:()=>setPhase("pick")},"← Pick another song"));
+  }else{
+    bodyEl=e("div",{style:{textAlign:"center"}},
+      e("div",{style:{fontSize:14,color:C.src,marginBottom:10}},
+        "Line "+(idx+1)+" of "+deck.length+"   ·   right "+score.right+" of "+score.total),
+      e("div",{style:{background:C.paper,border:`2px solid ${C.gold}`,borderRadius:14,
+        padding:"30px 22px",marginBottom:16,minHeight:110,display:"flex",
+        flexDirection:"column",justifyContent:"center"}},
+        e("div",{style:{fontSize:23,lineHeight:1.55,color:C.text,fontStyle:"italic"}},
+          "“"+it.text+"”"),
+        guess!==null&&e("div",{style:{marginTop:14,fontSize:15,lineHeight:1.5,
+          color:it.both?C.gold:(it.both||guess===it.origin)?"#7FD6A4":"#F0938F",fontWeight:"bold"}},
+          it.both
+            ?"✨ BOTH — the lyric quotes the talk word-for-word! Either answer counts."
+            :(guess===it.origin?"✓ Right — ":"✗ Nope — ")+
+              (it.origin==="talk"
+                ?(song.speaker||"The speaker")+" said it in “"+(song.talk||"the talk")+"”."
+                :"that one's from the song “"+song.title+"”."))),
+      e("div",{style:{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginBottom:14}},
+        answerBtn("talk","🕊","The Prophet"),
+        answerBtn("lyric","🎵","The Lyrics")),
+      guess!==null&&!finished&&e("button",{style:gameBtn,
+        onClick:()=>{setIdx(i=>i+1);setGuess(null);}},"Next line ▶"),
+      finished&&e("div",null,
+        e("div",{style:{fontSize:22,color:C.gold,fontWeight:"bold",margin:"6px 0 14px"}},
+          "🏁 "+score.right+" of "+score.total+" right"+
+          (score.right===score.total?" — perfect!":score.right>=score.total*0.7?" — sharp ears!":"")),
+        e("div",{style:{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}},
+          e("button",{style:gameBtn,onClick:again},"↻ New mix, same song"),
+          e("button",{style:gameGhost,onClick:()=>setPhase("pick")},"Pick another song"))));
+  }
+  return e("div",{style:{maxWidth:760,margin:"0 auto",padding:"26px 16px 46px"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:12}},
+      e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),onClick:onBack},"← Games"),
+      e("h2",{style:{margin:0,fontSize:22,color:C.gold,flex:1}},"🕊 Prophet or Lyric?"),
+      song&&phase==="play"&&e("span",{style:{fontSize:12.5,color:C.src}},song.title)),
+    bodyEl);
+}
+
 function GamesTab({songs,loading}){
   const [game,setGame]=useState(null);
   if(loading)return e("p",{style:{textAlign:"center",padding:40,color:C.src}},"Loading the library…");
@@ -4229,6 +4371,7 @@ function GamesTab({songs,loading}){
   if(game==="chairs")return e(MusicalChairs,{songs,onBack:()=>setGame(null)});
   if(game==="vanishing")return e(VanishingChorus,{songs,onBack:()=>setGame(null)});
   if(game==="bingo")return e(ConcertBingo,{songs,onBack:()=>setGame(null)});
+  if(game==="pol")return e(ProphetOrLyric,{songs,onBack:()=>setGame(null)});
   if(game==="memory")return e(ConcertMemory,{songs,onBack:()=>setGame(null)});
   const card=(key,icon,title,desc)=>e("div",{onClick:()=>setGame(key),
     style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:14,
@@ -4250,7 +4393,9 @@ function GamesTab({songs,loading}){
       card("bingo","🎟️","Concert Bingo",
         "Print a unique MUSIC card for every player, then the caller plays 20-second clips — five in a row shouts ENCORE!"),
       card("memory","🎼","Memory Match",
-        "Half the tiles show titles, half PLAY clips — match what you read to what you heard. A match keeps your turn.")));
+        "Half the tiles show titles, half PLAY clips — match what you read to what you heard. A match keeps your turn."),
+      card("pol","🕊","Prophet or Lyric?",
+        "Did the prophet say it in conference, or is it from the song? Trickier than it sounds — the best lyrics borrow his words.")));
 }
 
 function App(){
