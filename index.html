@@ -4048,6 +4048,180 @@ function ConcertBingo({songs,onBack}){
       onError:()=>setAudioNote("⚠ Couldn't load that clip — ⏭ skip to the next one.")}));
 }
 
+/* ── Memory Match (title ↔ audio) ───────────────────────────────
+   Every song contributes TWO face-down tiles: one shows its TITLE, the
+   other PLAYS a short clip when flipped. Match the title you read to the
+   clip you heard. A match scores and keeps the turn; a miss flips back
+   and passes play. Matched audio tiles can be tapped again to replay. */
+function ConcertMemory({songs,onBack}){
+  const TEAM_COLORS=["#E0524D","#4F9BE8","#3FA66A","#B58BE0"];
+  const pool=useMemo(()=>songs.filter(s=>s.audioUrl),[songs]);
+  const [pairs,setPairs]=useState(6);
+  const [teamCount,setTeamCount]=useState(2);
+  const [game,setGame]=useState(null);   // {tiles, state[], teams, turn, moves}
+  const [tick,setTick]=useState(0);
+  const [audioNote,setAudioNote]=useState("");
+  const audioRef=React.useRef(null);
+  const clipTimer=React.useRef(null);
+  const lockRef=React.useRef(false);
+  const firstRef=React.useRef(null);
+  useEffect(()=>()=>{clearTimeout(clipTimer.current);
+    const a=audioRef.current;if(a)a.pause();},[]);
+
+  function playClip(song,secs){
+    const a=audioRef.current;if(!a||!song)return;
+    clearTimeout(clipTimer.current);
+    a.src=song.audioUrl;
+    const seek=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
+      try{a.currentTime=st;}catch(_){}};
+    if(a.readyState>=1)seek();
+    else a.addEventListener("loadedmetadata",seek,{once:true});
+    a.play().then(()=>setAudioNote("")).catch(()=>
+      setAudioNote("⚠ The browser held the clip back — tap the 🎧 tile again."));
+    clipTimer.current=setTimeout(()=>{try{a.pause();}catch(_){}} ,(secs||9)*1000);
+  }
+  function stopClip(){clearTimeout(clipTimer.current);
+    const a=audioRef.current;if(a)a.pause();}
+
+  function start(){
+    const chosen=shuffleArr(pool).slice(0,Math.min(pairs,pool.length));
+    const tiles=shuffleArr(chosen.flatMap(s=>[{song:s,kind:"title"},{song:s,kind:"audio"}]));
+    lockRef.current=false;firstRef.current=null;
+    setGame({tiles,
+      state:tiles.map(()=>({up:false,matched:false,by:null})),
+      teams:Array.from({length:teamCount},(_,i)=>({name:teamCount>1?"Team "+(i+1):"You",score:0,color:TEAM_COLORS[i]})),
+      turn:0,moves:0});
+  }
+  function patch(fn){setGame(g=>{if(!g)return g;const n={...g,state:g.state.map(x=>({...x}))};fn(n);return n;});}
+
+  function flip(i){
+    const g=game;if(!g)return;
+    const st=g.state[i];
+    if(lockRef.current)return;
+    if(firstRef.current===i)return;   // same tile tapped twice — never self-match
+    if(st.matched){if(g.tiles[i].kind==="audio")playClip(g.tiles[i].song,9);return;}
+    if(st.up)return;
+    patch(n=>{n.state[i].up=true;n.moves+=1;});
+    if(g.tiles[i].kind==="audio")playClip(g.tiles[i].song,9);
+    if(firstRef.current===null){firstRef.current=i;return;}
+    const a=firstRef.current,b=i;
+    firstRef.current=null;
+    lockRef.current=true;
+    const isMatch=g.tiles[a].song.id===g.tiles[b].song.id;
+    setTimeout(()=>{
+      lockRef.current=false;
+      if(isMatch){
+        patch(n=>{
+          n.state[a].matched=n.state[b].matched=true;
+          n.state[a].by=n.state[b].by=n.turn;
+          n.state[a].up=n.state[b].up=false;
+          n.teams[n.turn].score+=1;
+        });
+      }else{
+        stopClip();
+        patch(n=>{
+          n.state[a].up=n.state[b].up=false;
+          n.turn=(n.turn+1)%n.teams.length;
+        });
+      }
+    },isMatch?1900:3000);
+  }
+
+  if(!pool.length)return e("div",{style:{maxWidth:680,margin:"0 auto",padding:"30px 20px",textAlign:"center"}},
+    e("p",{style:{color:C.src,fontSize:15}},"No songs with audio in the library yet."),
+    e("button",{style:gameGhost,onClick:onBack},"← Back"));
+
+  const allMatched=game&&game.state.every(x=>x.matched);
+  const cols=game?(game.tiles.length<=12?4:5):4;
+  const fontFor=t=>t.length<22?14:t.length<40?12:10.5;
+
+  let bodyEl;
+  if(!game){
+    bodyEl=e("div",{style:{textAlign:"center"}},
+      e("p",{style:{color:C.src,fontSize:14.5,lineHeight:1.6,marginBottom:16}},
+        "Face-down tiles hide song TITLES and song SOUNDS. Flip two — if the title matches the clip you heard, it's yours and you go again. A miss flips back and play passes on."),
+      e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,padding:"16px 18px",marginBottom:16}},
+        e("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"center",marginBottom:12}},
+          e("span",{style:{fontSize:13.5,color:C.src,fontWeight:"bold"}},"Songs:"),
+          [4,6,8,10].map(n=>e("button",{key:n,onClick:()=>setPairs(n),
+            style:{padding:"7px 13px",borderRadius:16,cursor:"pointer",fontSize:13.5,fontWeight:"bold",
+              fontFamily:"Georgia,serif",border:`1.5px solid ${pairs===n?C.gold:C.line}`,
+              background:pairs===n?C.gold:"transparent",color:pairs===n?"#0A1628":C.src}},n))),
+        e("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"center"}},
+          e("span",{style:{fontSize:13.5,color:C.src,fontWeight:"bold"}},"Teams:"),
+          [1,2,3,4].map(n=>e("button",{key:n,onClick:()=>setTeamCount(n),
+            style:{padding:"7px 13px",borderRadius:16,cursor:"pointer",fontSize:13.5,fontWeight:"bold",
+              fontFamily:"Georgia,serif",border:`1.5px solid ${teamCount===n?C.gold:C.line}`,
+              background:teamCount===n?C.gold:"transparent",color:teamCount===n?"#0A1628":C.src}},
+            n===1?"Solo":n))),
+      ),
+      e("button",{style:gameBtn,onClick:start},"▶ Deal the tiles ("+Math.min(pairs,pool.length)+" songs)"));
+  }else{
+    bodyEl=e("div",null,
+      e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",alignItems:"center",marginBottom:12}},
+        game.teams.map((t,i)=>{
+          const active=i===game.turn&&!allMatched;
+          return e("div",{key:i,style:{padding:"7px 14px",borderRadius:10,fontWeight:"bold",fontSize:15,
+            border:`2.5px solid ${t.color}`,transition:"all .25s",
+            background:active?t.color:"transparent",color:active?"#fff":t.color,
+            transform:active?"scale(1.08)":"none"}},
+            (active?"▶ ":"")+t.name+" · "+t.score);
+        }),
+        game.teams.length===1&&e("span",{style:{fontSize:13,color:C.src}},game.moves+" flips")),
+      audioNote&&e("div",{style:{fontSize:13.5,color:C.gold,fontWeight:"bold",marginBottom:10}},audioNote),
+      e("div",{style:{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8,marginBottom:14}},
+        game.tiles.map((tile,i)=>{
+          const st=game.state[i];
+          const showing=st.up||st.matched;
+          return e("button",{key:i,onClick:()=>flip(i),
+            style:{minHeight:74,padding:"6px 5px",borderRadius:10,cursor:"pointer",
+              fontFamily:"Georgia,serif",transition:"all .25s",
+              border:`2px solid ${st.matched?game.teams[st.by].color:showing?C.gold:C.line}`,
+              boxShadow:st.matched?`0 0 0 2px ${game.teams[st.by].color}`:"none",
+              background:showing?"#F5EEDC":C.paper,
+              color:showing?"#13294B":C.src,
+              opacity:st.matched?.82:1,
+              display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}},
+            !showing?e("span",{style:{fontSize:26}},"🎼")
+            :tile.kind==="title"||st.matched
+              ?e(React.Fragment,null,
+                  tile.kind==="audio"&&e("span",{style:{fontSize:15}},"🎧"),
+                  e("span",{style:{fontSize:fontFor(tile.song.title),fontWeight:"bold",lineHeight:1.25}},tile.song.title),
+                  st.matched&&tile.kind==="audio"&&e("span",{style:{fontSize:9.5,color:"#8a6030"}},"tap to replay"))
+              :e(React.Fragment,null,
+                  e("span",{style:{fontSize:24}},"🎧"),
+                  e("span",{style:{fontSize:11,fontWeight:"bold"}},"listen…")));
+        })),
+      e("div",{style:{display:"flex",gap:9,justifyContent:"center",flexWrap:"wrap"}},
+        e("button",{style:gameGhost,onClick:()=>{stopClip();start();}},"↻ New game"),
+        e("button",{style:gameGhost,onClick:()=>{stopClip();setGame(null);}},"⚙ Setup")),
+      allMatched&&e("div",{style:{position:"fixed",inset:0,zIndex:60,background:"rgba(10,22,40,.94)",
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,color:"#fff"}},
+        e("div",{style:{fontSize:58}},"🏆"),
+        e("div",{style:{fontSize:30,fontWeight:"bold",color:C.gold,textAlign:"center",padding:"0 18px"}},
+          (function(){
+            if(game.teams.length===1)return "All matched in "+game.moves+" flips!";
+            const top=Math.max.apply(null,game.teams.map(t=>t.score));
+            const w=game.teams.filter(t=>t.score===top);
+            return w.length>1?"Tie — "+w.map(t=>t.name).join(" & ")+"!":w[0].name+" wins!";
+          })()),
+        game.teams.length>1&&e("div",{style:{fontSize:16,color:"#EAF0FA"}},
+          game.teams.map(t=>t.name+": "+t.score).join("   ·   ")),
+        e("div",{style:{display:"flex",gap:10}},
+          e("button",{style:gameBtn,onClick:()=>{stopClip();start();}},"↻ Play again"),
+          e("button",{style:Object.assign({},gameGhost,{borderColor:"#fff",color:"#fff"}),
+            onClick:()=>{stopClip();setGame(null);}},"⚙ Setup"))));
+  }
+  return e("div",{style:{maxWidth:860,margin:"0 auto",padding:"26px 16px 46px",textAlign:"center"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:12}},
+      e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),
+        onClick:()=>{stopClip();onBack();}},"← Games"),
+      e("h2",{style:{margin:0,fontSize:22,color:C.gold,flex:1,textAlign:"left"}},"🎼 Memory Match")),
+    bodyEl,
+    e("audio",{ref:audioRef,preload:"auto",style:{display:"none"},
+      onError:()=>setAudioNote("⚠ Couldn't load that clip — flip it again to retry.")}));
+}
+
 function GamesTab({songs,loading}){
   const [game,setGame]=useState(null);
   if(loading)return e("p",{style:{textAlign:"center",padding:40,color:C.src}},"Loading the library…");
@@ -4055,6 +4229,7 @@ function GamesTab({songs,loading}){
   if(game==="chairs")return e(MusicalChairs,{songs,onBack:()=>setGame(null)});
   if(game==="vanishing")return e(VanishingChorus,{songs,onBack:()=>setGame(null)});
   if(game==="bingo")return e(ConcertBingo,{songs,onBack:()=>setGame(null)});
+  if(game==="memory")return e(ConcertMemory,{songs,onBack:()=>setGame(null)});
   const card=(key,icon,title,desc)=>e("div",{onClick:()=>setGame(key),
     style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:14,
       padding:"22px 20px",cursor:"pointer",textAlign:"center"}},
@@ -4073,7 +4248,9 @@ function GamesTab({songs,loading}){
       card("vanishing","🌫️","Vanishing Chorus",
         "The music keeps playing while the words fade a few at a time — keep singing until the whole chorus is from memory."),
       card("bingo","🎟️","Concert Bingo",
-        "Print a unique MUSIC card for every player, then the caller plays 20-second clips — five in a row shouts ENCORE!")));
+        "Print a unique MUSIC card for every player, then the caller plays 20-second clips — five in a row shouts ENCORE!"),
+      card("memory","🎼","Memory Match",
+        "Half the tiles show titles, half PLAY clips — match what you read to what you heard. A match keeps your turn.")));
 }
 
 function App(){
