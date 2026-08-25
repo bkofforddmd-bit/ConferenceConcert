@@ -3627,6 +3627,7 @@ function MusicalChairs({songs,onBack}){
   const [maxGap,setMaxGap]=useState(25);
   const [switchEachRound,setSwitchEachRound]=useState(true);
   const [current,setCurrent]=useState(null);
+  const [audioNote,setAudioNote]=useState("");   // visible instead of silent failure
   const audioRef=React.useRef(null);
   const timerRef=React.useRef(null);
   const orderRef=React.useRef([]);
@@ -3657,7 +3658,8 @@ function MusicalChairs({songs,onBack}){
       try{a.currentTime=st;}catch(_){}};
     if(a.readyState>=1)seek();
     else a.addEventListener("loadedmetadata",seek,{once:true});
-    a.play().catch(()=>{});
+    a.play().then(()=>setAudioNote("")).catch(()=>
+      setAudioNote("⚠ The browser held the music back — tap ▶ Play music."));
   }
   function start(){stopPreview();setRounds(0);
     orderRef.current=shuffleArr(pool);setState("playing");playSong(nextSong());}
@@ -3665,7 +3667,9 @@ function MusicalChairs({songs,onBack}){
     setState("playing");
     const a=audioRef.current;
     if(switchEachRound||!a||!a.src)playSong(nextSong());
-    else{a.play().catch(()=>{});scheduleStop();}
+    else{a.play().then(()=>setAudioNote("")).catch(()=>
+      setAudioNote("⚠ The browser held the music back — tap ▶ Play music."));
+      scheduleStop();}
   }
   function end(){clearTimeout(timerRef.current);
     const a=audioRef.current;if(a)a.pause();setState("idle");}
@@ -3705,7 +3709,10 @@ function MusicalChairs({songs,onBack}){
       current&&e("div",{style:{fontSize:20,color:C.text,fontWeight:"bold",marginBottom:4}},"♪ "+current.title),
       current&&current.speaker&&e("div",{style:{fontSize:13,color:C.src,marginBottom:18}},current.speaker),
       e("div",{style:{fontSize:64,margin:"14px 0 22px"}},"🎶"),
+      audioNote&&e("div",{style:{color:C.gold,fontSize:15,marginBottom:12}},audioNote),
       e("div",{style:{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}},
+        audioNote&&e("button",{style:gameBtn,onClick:()=>{const x=audioRef.current;
+          if(x)x.play().then(()=>setAudioNote("")).catch(()=>{});}},"▶ Play music"),
         e("button",{style:gameGhost,onClick:()=>playSong(nextSong())},"⏭ Different song"),
         e("button",{style:gameGhost,onClick:end},"⏹ End game"))),
     state==="stopped"&&e("div",{onClick:resume,
@@ -3720,7 +3727,167 @@ function MusicalChairs({songs,onBack}){
         style:Object.assign({},gameGhost,{marginTop:26,borderColor:"#fff",color:"#fff"})},"⏹ End game")),
     e("audio",{ref:audioRef,preload:"auto",
       onEnded:()=>{if(state==="playing")playSong(nextSong());},
+      onError:()=>setAudioNote("⚠ Couldn't load that song — ⏭ try a different one."),
       style:{display:"none"}}));
+}
+
+/* Split lyrics into stanzas (blank-line separated). Each stanza keeps the
+   index of its first line so tap-synced songs can start playback there. */
+function splitStanzas(lyrics){
+  const lines=(lyrics||"").split("\n");
+  const st=[];let cur=null;
+  lines.forEach((ln,i)=>{
+    if(ln.trim()===""){cur=null;return;}
+    if(!cur){cur={start:i,lines:[]};st.push(cur);}
+    cur.lines.push(ln.trim());
+  });
+  return st.filter(s=>s.lines.filter(l=>l.length>2).length>=2);
+}
+/* The chorus is usually the stanza whose text repeats — return the first
+   stanza with the highest repeat count, or -1 if nothing repeats. */
+function chorusIndex(stanzas){
+  const norm=s=>s.lines.join(" ").toLowerCase().replace(/[^a-z0-9 ]+/g,"").replace(/\s+/g," ").trim();
+  const counts={};
+  stanzas.forEach(s=>{const k=norm(s);counts[k]=(counts[k]||0)+1;});
+  const max=Math.max.apply(null,stanzas.map(s=>counts[norm(s)]).concat([0]));
+  if(max<2)return -1;
+  return stanzas.findIndex(s=>counts[norm(s)]===max);
+}
+
+function VanishingChorus({songs,onBack}){
+  const pool=useMemo(()=>songs.filter(s=>s.lyrics&&splitStanzas(s.lyrics).length>=1),[songs]);
+  const [song,setSong]=useState(null);
+  const [stanzaIdx,setStanzaIdx]=useState(0);
+  const [hidden,setHidden]=useState(()=>new Set());
+  const [auto,setAuto]=useState(false);
+  const [tick,setTick]=useState(0);   // re-render for the play/pause icon
+  const audioRef=React.useRef(null);
+  const loadedRef=React.useRef(null);
+  useEffect(()=>()=>{const a=audioRef.current;if(a)a.pause();},[]);
+
+  const stanzas=useMemo(()=>song?splitStanzas(song.lyrics):[],[song]);
+  const chorusAt=useMemo(()=>chorusIndex(stanzas),[stanzas]);
+  const stanza=stanzas[stanzaIdx]||null;
+  const words=useMemo(()=>{
+    if(!stanza)return [];
+    const out=[];
+    stanza.lines.forEach((ln,li)=>ln.split(/\s+/).forEach(w=>{if(w)out.push({w,li});}));
+    return out;
+  },[stanza]);
+  const allGone=words.length>0&&hidden.size>=words.length;
+
+  function playFromStanza(s,st){
+    const a=audioRef.current;if(!a||!s.audioUrl)return;
+    if(loadedRef.current!==s.id){a.src=s.audioUrl;loadedRef.current=s.id;}
+    const tms=lineTimings(s.lyrics,s.lyricTimings);
+    const startT=(tms&&st)?Math.max(0,(tms[st.start]||0)-0.4)
+      :Math.max(0,parseInt(s.previewStart,10)||0);
+    const seek=()=>{try{a.currentTime=startT;}catch(_){}};
+    if(a.readyState>=1)seek();
+    else a.addEventListener("loadedmetadata",seek,{once:true});
+    a.play().catch(()=>{});   // inside the tap — see the silent-audio fix
+  }
+  function pickSong(s){
+    const sts=splitStanzas(s.lyrics);
+    const ci=chorusIndex(sts);
+    const idx=ci>=0?ci:0;
+    setSong(s);setStanzaIdx(idx);setHidden(new Set());setAuto(false);
+    playFromStanza(s,sts[idx]);
+  }
+  function switchStanza(i){
+    setStanzaIdx(i);setHidden(new Set());
+    if(song)playFromStanza(song,stanzas[i]);
+  }
+  function vanish(){
+    setHidden(prev=>{
+      const visible=[];
+      for(let i=0;i<words.length;i++)if(!prev.has(i))visible.push(i);
+      if(!visible.length)return prev;
+      const n=Math.min(visible.length,1+Math.floor(Math.random()*3));
+      const next=new Set(prev);
+      for(let k=0;k<n;k++){
+        const j=Math.floor(Math.random()*visible.length);
+        next.add(visible[j]);visible.splice(j,1);
+      }
+      return next;
+    });
+  }
+  useEffect(()=>{
+    if(!auto||allGone)return;
+    const t=setInterval(vanish,4000);
+    return()=>clearInterval(t);
+  },[auto,words,allGone]);
+
+  if(!pool.length)return e("div",{style:{maxWidth:680,margin:"0 auto",padding:"30px 20px",textAlign:"center"}},
+    e("p",{style:{color:C.src,fontSize:15,lineHeight:1.6}},"No songs with lyrics in the library yet."),
+    e("button",{style:gameGhost,onClick:onBack},"← Back"));
+
+  // ── Song picker ──
+  if(!song)return e("div",{style:{maxWidth:720,margin:"0 auto",padding:"26px 16px 46px"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
+      e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),onClick:onBack},"← Games"),
+      e("h2",{style:{margin:0,fontSize:22,color:C.gold}},"🌫️ Vanishing Chorus")),
+    e("p",{style:{color:C.src,fontSize:14.5,lineHeight:1.6,marginBottom:16}},
+      "Pick a song. The music plays while the words fade away a few at a time — keep singing until the whole chorus is from memory. Tap the lyrics (or turn on auto) to vanish words."),
+    pool.map(s=>{
+      const synced=!!(lineTimings(s.lyrics,s.lyricTimings)&&s.audioUrl);
+      return e("div",{key:s.id||s.title,onClick:()=>pickSong(s),
+        style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,
+          padding:"12px 14px",marginBottom:8,cursor:"pointer",
+          display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+        e("div",{style:{flex:1,minWidth:160}},
+          e("div",{style:{fontSize:16,fontWeight:"bold",color:C.text}},s.title),
+          s.speaker&&e("div",{style:{fontSize:12.5,color:C.src}},s.speaker)),
+        synced&&e("span",{style:{fontSize:11.5,color:C.gold,border:`1px solid ${C.gold}`,
+          borderRadius:12,padding:"3px 9px"}},"🎯 starts at the chorus"),
+        !s.audioUrl&&e("span",{style:{fontSize:11.5,color:C.src}},"words only"));
+    }));
+
+  // ── Play screen ──
+  const a=audioRef.current;
+  const isPlaying=a&&!a.paused;
+  return e("div",{style:{maxWidth:860,margin:"0 auto",padding:"26px 16px 46px",textAlign:"center"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}},
+      e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),
+        onClick:()=>{const x=audioRef.current;if(x)x.pause();setSong(null);}},"← Songs"),
+      e("div",{style:{flex:1,textAlign:"left"}},
+        e("div",{style:{fontSize:18,fontWeight:"bold",color:C.gold}},song.title),
+        song.speaker&&e("div",{style:{fontSize:12.5,color:C.src}},song.speaker))),
+    stanzas.length>1&&e("div",{style:{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"center",marginBottom:12}},
+      stanzas.map((st,i)=>e("button",{key:i,onClick:()=>switchStanza(i),
+        style:{padding:"6px 12px",borderRadius:14,cursor:"pointer",fontSize:12.5,fontWeight:"bold",
+          border:`1.5px solid ${i===stanzaIdx?C.gold:C.line}`,
+          background:i===stanzaIdx?C.gold:"transparent",
+          color:i===stanzaIdx?"#0A1628":C.src}},
+        i===chorusAt?"★ Chorus":"Part "+(i+1)))),
+    e("div",{onClick:vanish,
+      style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:14,
+        padding:"26px 20px",marginBottom:14,cursor:"pointer",userSelect:"none",minHeight:120}},
+      stanza&&stanza.lines.map((ln,li)=>e("div",{key:li,style:{fontSize:26,lineHeight:1.7,color:C.text}},
+        (function(){
+          let base=0;
+          for(let k=0;k<li;k++)base+=stanza.lines[k].split(/\s+/).filter(Boolean).length;
+          return ln.split(/\s+/).filter(Boolean).map((w,wi)=>{
+            const gone=hidden.has(base+wi);
+            return e("span",{key:wi,style:{display:"inline-block",margin:"0 .26em",
+              transition:"opacity .5s ease, transform .5s ease",
+              opacity:gone?0:1,transform:gone?"translateY(-12px) scale(.8)":"none"}},w);
+          });
+        })())),
+      allGone&&e("div",{style:{fontSize:19,color:C.gold,fontWeight:"bold",marginTop:10}},
+        "🎉 All from memory — keep singing!")),
+    e("div",{style:{display:"flex",gap:9,justifyContent:"center",flexWrap:"wrap",alignItems:"center"}},
+      e("button",{style:gameBtn,onClick:vanish},"🌫️ Vanish a few"),
+      e("button",{style:gameGhost,onClick:()=>{const x=audioRef.current;if(!x)return;
+        if(x.paused){x.play().catch(()=>{});}else x.pause();setTick(t=>t+1);}},
+        isPlaying?"⏸ Pause":"▶ Play"),
+      song.audioUrl&&e("button",{style:gameGhost,onClick:()=>playFromStanza(song,stanza)},"↻ From the top"),
+      e("button",{style:gameGhost,onClick:()=>setHidden(new Set())},"👁 Show all"),
+      e("label",{style:{fontSize:13.5,color:C.src,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}},
+        e("input",{type:"checkbox",checked:auto,onChange:ev=>setAuto(ev.target.checked)}),
+        "Auto — a few every 4s")),
+    e("audio",{ref:audioRef,preload:"auto",style:{display:"none"},
+      onPlay:()=>setTick(t=>t+1),onPause:()=>setTick(t=>t+1)}));
 }
 
 function GamesTab({songs,loading}){
@@ -3728,6 +3895,7 @@ function GamesTab({songs,loading}){
   if(loading)return e("p",{style:{textAlign:"center",padding:40,color:C.src}},"Loading the library…");
   if(game==="lyric")return e(FinishTheLyric,{songs,onBack:()=>setGame(null)});
   if(game==="chairs")return e(MusicalChairs,{songs,onBack:()=>setGame(null)});
+  if(game==="vanishing")return e(VanishingChorus,{songs,onBack:()=>setGame(null)});
   const card=(key,icon,title,desc)=>e("div",{onClick:()=>setGame(key),
     style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:14,
       padding:"22px 20px",cursor:"pointer",textAlign:"center"}},
@@ -3742,7 +3910,9 @@ function GamesTab({songs,loading}){
       card("lyric","🎤","Finish the Lyric",
         "A line appears with its ending missing — sing what comes next, then reveal. Tap-synced songs pause the real recording right where you come in."),
       card("chairs","🪑","Musical Chairs",
-        "The music plays and stops at a random moment nobody can predict. Grab a chair! Tap for the next round.")));
+        "The music plays and stops at a random moment nobody can predict. Grab a chair! Tap for the next round."),
+      card("vanishing","🌫️","Vanishing Chorus",
+        "The music keeps playing while the words fade a few at a time — keep singing until the whole chorus is from memory.")));
 }
 
 function App(){
