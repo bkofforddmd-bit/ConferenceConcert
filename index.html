@@ -625,7 +625,7 @@ function targetText(t){
 
 /* ----------------------------------------------------------- Header */
 function Header({tab,setTab,bandVersion}){
-  const tabs=[["library","Library"],["concert","Build a Concert"],["suggest","Suggest a Talk"],["testimonies","Testimonies"],["band","Band Upload"]];
+  const tabs=[["library","Library"],["concert","Build a Concert"],["suggest","Suggest a Talk"],["testimonies","Testimonies"],["games","Games"],["band","Band Upload"]];
   const bandMode=!!sessionStorage.getItem("cac_pw");
   if(bandMode)tabs.push(["inbox","Suggestions"],["requests","Requests"]);
   return e("header",{style:{background:C.brown,color:C.cream,
@@ -3464,6 +3464,281 @@ function InstallHelper(){
       canPrompt?"⤓ Install app":"⤓ Add to home screen"));
 }
 
+/* ----------------------------------------------------------- Games */
+/* Two singalong games built on the library the app already loads.
+   🎤 Finish the Lyric — a line appears with its ending missing; sing it.
+      Songs synced with the tap-sync tool play the REAL audio and pause
+      exactly where the next words should be sung. Unsynced songs play a
+      text round (with the 20s preview as a hint).
+   🪑 Musical Chairs — the music plays and stops at random moments. */
+
+function shuffleArr(a){const r=a.slice();
+  for(let i=r.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));
+    const t=r[i];r[i]=r[j];r[j]=t;}return r;}
+function pickRandom(arr){return arr[Math.floor(Math.random()*arr.length)];}
+const gameBtn={padding:"12px 22px",fontSize:15,borderRadius:9,border:0,
+  background:C.gold,color:"#0A1628",fontWeight:"bold",cursor:"pointer"};
+const gameGhost={padding:"12px 22px",fontSize:15,borderRadius:9,
+  border:`1.5px solid ${C.gold}`,background:"transparent",color:C.gold,
+  fontWeight:"bold",cursor:"pointer"};
+
+/* Is this lyric line worth playing with? (skips blanks and [Chorus] tags) */
+function lyricLineOk(l){const t=(l||"").trim();
+  return t.length>=12&&!/^\[.*\]$/.test(t)&&!/^\(.*\)$/.test(t);}
+
+function FinishTheLyric({songs,onBack}){
+  const pool=useMemo(()=>songs.filter(s=>{
+    if(!s.lyrics)return false;
+    return s.lyrics.split("\n").filter(lyricLineOk).length>=4;
+  }),[songs]);
+  const [round,setRound]=useState(null);
+  const [hardMode,setHardMode]=useState(false);
+  const [count,setCount]=useState(0);
+  const audioRef=React.useRef(null);
+  const watcherRef=React.useRef(null);
+  const cleanupAudio=()=>{
+    if(watcherRef.current){clearInterval(watcherRef.current);watcherRef.current=null;}
+    const a=audioRef.current;if(a)a.pause();
+    stopPreview();
+  };
+  useEffect(()=>cleanupAudio,[]);
+
+  function newRound(){
+    cleanupAudio();
+    if(!pool.length)return;
+    // Try a few songs until one yields a target line with a line before it.
+    for(let attempt=0;attempt<10;attempt++){
+      const song=pickRandom(pool);
+      const rawLines=song.lyrics.split("\n");
+      const candidates=[];
+      for(let i=1;i<rawLines.length;i++){
+        if(lyricLineOk(rawLines[i])&&lyricLineOk(rawLines[i-1]))candidates.push(i);
+      }
+      if(!candidates.length)continue;
+      const idx=pickRandom(candidates);
+      const times=lineTimings(song.lyrics,song.lyricTimings);
+      const synced=!!(times&&song.audioUrl);
+      setRound({song,rawLines,idx,times,synced,revealed:false});
+      setCount(c=>c+1);
+      if(synced)playUpToLine(song,rawLines,times,idx);
+      return;
+    }
+  }
+  /* Synced round: play from ~2 lines before the target, pause right where
+     the target line should begin — the class sings what comes next. */
+  function playUpToLine(song,rawLines,times,idx){
+    const a=audioRef.current;if(!a)return;
+    let startLine=idx-2;
+    while(startLine>0&&!lyricLineOk(rawLines[startLine]))startLine--;
+    const startT=Math.max(0,(times[startLine]||0)-0.4);
+    const stopT=times[idx];
+    a.src=song.audioUrl;
+    const begin=()=>{try{a.currentTime=startT;}catch(_){}
+      a.play().catch(()=>{});
+      watcherRef.current=setInterval(()=>{
+        if(a.currentTime>=stopT-0.15){a.pause();
+          clearInterval(watcherRef.current);watcherRef.current=null;}
+      },60);};
+    if(a.readyState>=1)begin();
+    else a.addEventListener("loadedmetadata",begin,{once:true});
+  }
+  /* Reveal on a synced round: let the real recording sing the answer. */
+  function playTheLine(){
+    const r=round;if(!r||!r.synced)return;
+    const a=audioRef.current;if(!a)return;
+    if(watcherRef.current){clearInterval(watcherRef.current);watcherRef.current=null;}
+    let nxt=r.idx+1;
+    while(nxt<r.rawLines.length&&!lyricLineOk(r.rawLines[nxt]))nxt++;
+    const stopT=nxt<r.rawLines.length?r.times[nxt]:(r.times[r.idx]+8);
+    try{a.currentTime=Math.max(0,r.times[r.idx]-0.3);}catch(_){}
+    a.play().catch(()=>{});
+    watcherRef.current=setInterval(()=>{
+      if(a.currentTime>=stopT-0.1){a.pause();
+        clearInterval(watcherRef.current);watcherRef.current=null;}
+    },60);
+  }
+  const reveal=()=>{setRound(r=>r?Object.assign({},r,{revealed:true}):r);playTheLine();};
+
+  if(!pool.length)return e("div",{style:{maxWidth:680,margin:"0 auto",padding:"30px 20px",textAlign:"center"}},
+    e("p",{style:{color:C.src,fontSize:15,lineHeight:1.6}},
+      "No songs with lyrics in the library yet — add lyrics in Band Upload and this game fills itself."),
+    e("button",{style:gameGhost,onClick:onBack},"← Back"));
+
+  /* Blank out the tail of the target line for text rounds / pre-reveal. */
+  function blanked(line){
+    const words=line.trim().split(/\s+/);
+    const keep=Math.max(1,Math.ceil(words.length*0.4));
+    return words.slice(0,keep).join(" ")+" "+
+      words.slice(keep).map(w=>"_".repeat(Math.max(3,Math.min(9,w.length)))).join("  ");
+  }
+
+  let body=null;
+  if(round){
+    const {song,rawLines,idx,synced,revealed}=round;
+    const context=[];
+    for(let i=idx-1;i>=0&&context.length<2;i--){
+      if(lyricLineOk(rawLines[i]))context.unshift(rawLines[i].trim());
+    }
+    body=e("div",{style:{textAlign:"center"}},
+      e("div",{style:{fontSize:13,color:C.src,marginBottom:6}},
+        "Round "+count+(synced?" · 🎧 the song pauses where YOU come in":" · 📜 finish the words")),
+      e("div",{style:{fontSize:15,color:C.gold,fontWeight:"bold",marginBottom:16,minHeight:22}},
+        hardMode&&!revealed?"Song hidden — hard mode":
+          song.title+(song.speaker?"  ·  "+song.speaker:"")),
+      e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,
+        padding:"22px 18px",maxWidth:720,margin:"0 auto 18px"}},
+        context.map((l,i)=>e("div",{key:i,style:{fontSize:19,color:C.src,
+          lineHeight:1.6,fontStyle:"italic"}},l)),
+        e("div",{style:{fontSize:24,color:C.text,lineHeight:1.6,fontWeight:"bold",
+          marginTop:8,letterSpacing:revealed?"normal":"0.5px"}},
+          revealed?rawLines[idx].trim():
+            (synced?"🎤  …what comes next?":blanked(rawLines[idx])))),
+      e("div",{style:{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}},
+        !revealed&&e("button",{style:gameBtn,onClick:reveal},"👁 Reveal"),
+        revealed&&synced&&e("button",{style:gameGhost,onClick:playTheLine},"↻ Hear the line again"),
+        !synced&&song.audioUrl&&e("button",{style:gameGhost,
+          onClick:()=>playPreview(song)},"▶ 20s snippet hint"),
+        e("button",{style:revealed?gameBtn:gameGhost,onClick:newRound},"Next lyric ▶")));
+  }
+  return e("div",{style:{maxWidth:760,margin:"0 auto",padding:"26px 16px 46px"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}},
+      e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),onClick:()=>{cleanupAudio();onBack();}},"← Games"),
+      e("h2",{style:{margin:0,fontSize:22,color:C.gold,flex:1}},"🎤 Finish the Lyric"),
+      e("label",{style:{fontSize:13,color:C.src,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}},
+        e("input",{type:"checkbox",checked:hardMode,onChange:ev=>setHardMode(ev.target.checked)}),
+        "Hide song titles")),
+    !round&&e("div",{style:{textAlign:"center",padding:"30px 10px"}},
+      e("p",{style:{color:C.src,fontSize:15,lineHeight:1.65,maxWidth:560,margin:"0 auto 20px"}},
+        "A lyric appears with its ending missing — sing or say what comes next, then reveal. ",
+        "Songs that have been tap-synced play the real recording and pause right where you come in. ",
+        pool.length+" songs are ready to play."),
+      e("button",{style:gameBtn,onClick:newRound},"▶ First lyric")),
+    body,
+    e("audio",{ref:audioRef,preload:"none",style:{display:"none"}}));
+}
+
+function MusicalChairs({songs,onBack}){
+  const pool=useMemo(()=>songs.filter(s=>s.audioUrl),[songs]);
+  const [state,setState]=useState("idle");   // idle | playing | stopped
+  const [rounds,setRounds]=useState(0);
+  const [minGap,setMinGap]=useState(8);
+  const [maxGap,setMaxGap]=useState(25);
+  const [switchEachRound,setSwitchEachRound]=useState(true);
+  const [current,setCurrent]=useState(null);
+  const audioRef=React.useRef(null);
+  const timerRef=React.useRef(null);
+  const orderRef=React.useRef([]);
+  useEffect(()=>()=>{clearTimeout(timerRef.current);
+    const a=audioRef.current;if(a)a.pause();},[]);
+
+  function nextSong(){
+    if(!orderRef.current.length)orderRef.current=shuffleArr(pool);
+    return orderRef.current.pop();
+  }
+  function scheduleStop(){
+    clearTimeout(timerRef.current);
+    const lo=Math.min(minGap,maxGap),hi=Math.max(minGap,maxGap);
+    const delay=(lo+Math.random()*(hi-lo))*1000;
+    timerRef.current=setTimeout(()=>{
+      const a=audioRef.current;if(a)a.pause();
+      setRounds(r=>r+1);setState("stopped");
+    },delay);
+  }
+  function playSong(song){
+    const a=audioRef.current;if(!a||!song)return;
+    setCurrent(song);
+    scheduleStop();   // the round clock runs even if the audio is still loading
+    a.src=song.audioUrl;
+    const begin=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
+      try{a.currentTime=st;}catch(_){}
+      a.play().catch(()=>{});};
+    if(a.readyState>=1)begin();
+    else a.addEventListener("loadedmetadata",begin,{once:true});
+  }
+  function start(){stopPreview();setRounds(0);
+    orderRef.current=shuffleArr(pool);setState("playing");playSong(nextSong());}
+  function resume(){
+    setState("playing");
+    const a=audioRef.current;
+    if(switchEachRound||!a||!a.src)playSong(nextSong());
+    else{a.play().catch(()=>{});scheduleStop();}
+  }
+  function end(){clearTimeout(timerRef.current);
+    const a=audioRef.current;if(a)a.pause();setState("idle");}
+
+  if(!pool.length)return e("div",{style:{maxWidth:680,margin:"0 auto",padding:"30px 20px",textAlign:"center"}},
+    e("p",{style:{color:C.src,fontSize:15,lineHeight:1.6}},
+      "No songs with audio in the library yet."),
+    e("button",{style:gameGhost,onClick:onBack},"← Back"));
+
+  const slider=(label,val,setVal)=>e("label",{style:{display:"block",fontSize:13,
+    color:C.src,marginBottom:10,textAlign:"left"}},
+    label+": "+val+"s",
+    e("input",{type:"range",min:3,max:60,value:val,
+      onChange:ev=>setVal(Number(ev.target.value)),
+      style:{width:"100%",accentColor:C.gold}}));
+
+  return e("div",{style:{maxWidth:680,margin:"0 auto",padding:"26px 16px 46px",textAlign:"center"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:14}},
+      e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),
+        onClick:()=>{end();onBack();}},"← Games"),
+      e("h2",{style:{margin:0,fontSize:22,color:C.gold,flex:1,textAlign:"left"}},"🪑 Musical Chairs")),
+    state==="idle"&&e("div",null,
+      e("p",{style:{color:C.src,fontSize:15,lineHeight:1.65,marginBottom:18}},
+        "Set up the chairs, press play, and the music stops on its own at a random moment — nobody (including you) knows when. Tap to start the next round."),
+      e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,
+        padding:"16px 18px",marginBottom:18}},
+        slider("Shortest time between stops",minGap,setMinGap),
+        slider("Longest time between stops",maxGap,setMaxGap),
+        e("label",{style:{fontSize:13,color:C.src,display:"flex",alignItems:"center",
+          gap:7,cursor:"pointer",justifyContent:"center"}},
+          e("input",{type:"checkbox",checked:switchEachRound,
+            onChange:ev=>setSwitchEachRound(ev.target.checked)}),
+          "New song each round")),
+      e("button",{style:gameBtn,onClick:start},"▶ Start the music ("+pool.length+" songs)")),
+    state==="playing"&&e("div",null,
+      e("div",{style:{fontSize:15,color:C.src,marginBottom:6}},"Round "+(rounds+1)+" — listen…"),
+      current&&e("div",{style:{fontSize:20,color:C.text,fontWeight:"bold",marginBottom:4}},"♪ "+current.title),
+      current&&current.speaker&&e("div",{style:{fontSize:13,color:C.src,marginBottom:18}},current.speaker),
+      e("div",{style:{fontSize:64,margin:"14px 0 22px"}},"🎶"),
+      e("div",{style:{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}},
+        e("button",{style:gameGhost,onClick:()=>playSong(nextSong())},"⏭ Different song"),
+        e("button",{style:gameGhost,onClick:end},"⏹ End game"))),
+    state==="stopped"&&e("div",{onClick:resume,
+      style:{position:"fixed",inset:0,zIndex:60,background:"rgba(140,28,28,.96)",
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        cursor:"pointer",color:"#fff"}},
+      e("div",{style:{fontSize:92,lineHeight:1}},"🪑"),
+      e("div",{style:{fontSize:56,fontWeight:"bold",letterSpacing:"0.06em",margin:"10px 0 6px"}},"SIT!"),
+      e("div",{style:{fontSize:17,opacity:.9}},"Round "+rounds+" — anyone out?"),
+      e("div",{style:{fontSize:15,opacity:.75,marginTop:22}},"Tap anywhere for the next round ▶"),
+      e("button",{onClick:ev=>{ev.stopPropagation();end();},
+        style:Object.assign({},gameGhost,{marginTop:26,borderColor:"#fff",color:"#fff"})},"⏹ End game")),
+    e("audio",{ref:audioRef,preload:"none",style:{display:"none"}}));
+}
+
+function GamesTab({songs,loading}){
+  const [game,setGame]=useState(null);
+  if(loading)return e("p",{style:{textAlign:"center",padding:40,color:C.src}},"Loading the library…");
+  if(game==="lyric")return e(FinishTheLyric,{songs,onBack:()=>setGame(null)});
+  if(game==="chairs")return e(MusicalChairs,{songs,onBack:()=>setGame(null)});
+  const card=(key,icon,title,desc)=>e("div",{onClick:()=>setGame(key),
+    style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:14,
+      padding:"22px 20px",cursor:"pointer",textAlign:"center"}},
+    e("div",{style:{fontSize:44,marginBottom:8}},icon),
+    e("div",{style:{fontSize:19,fontWeight:"bold",color:C.gold,marginBottom:6}},title),
+    e("div",{style:{fontSize:13.5,color:C.src,lineHeight:1.55}},desc));
+  return e("div",{style:{maxWidth:760,margin:"0 auto",padding:"30px 16px 50px"}},
+    e("h2",{style:{textAlign:"center",fontSize:24,color:C.gold,margin:"0 0 6px"}},"Family games"),
+    e("p",{style:{textAlign:"center",fontSize:14,color:C.src,margin:"0 0 22px"}},
+      "Played with the songs in the library — nothing to set up."),
+    e("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:14}},
+      card("lyric","🎤","Finish the Lyric",
+        "A line appears with its ending missing — sing what comes next, then reveal. Tap-synced songs pause the real recording right where you come in."),
+      card("chairs","🪑","Musical Chairs",
+        "The music plays and stops at a random moment nobody can predict. Grab a chair! Tap for the next round.")));
+}
+
 function App(){
   const concertId=new URLSearchParams(location.search).get("concert");
   const songParam=new URLSearchParams(location.search).get("song");
@@ -3507,6 +3782,7 @@ function App(){
     tab==="concert"&&e(ConcertBuilder,{songs,loading}),
     tab==="suggest"&&e(Suggest),
     tab==="testimonies"&&e(Testimonies,{songs}),
+    tab==="games"&&e(GamesTab,{songs,loading}),
     tab==="inbox"&&e(SuggestionsInbox),
     tab==="requests"&&e(AccessInbox),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();},onBandChange}),
