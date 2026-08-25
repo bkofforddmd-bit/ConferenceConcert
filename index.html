@@ -3533,14 +3533,16 @@ function FinishTheLyric({songs,onBack}){
     const startT=Math.max(0,(times[startLine]||0)-0.4);
     const stopT=times[idx];
     a.src=song.audioUrl;
-    const begin=()=>{try{a.currentTime=startT;}catch(_){}
-      a.play().catch(()=>{});
+    // Play immediately (inside the tap); seek once metadata arrives, and only
+    // then arm the pause-watcher so it can't trip while currentTime is still 0.
+    const seek=()=>{try{a.currentTime=startT;}catch(_){}
       watcherRef.current=setInterval(()=>{
         if(a.currentTime>=stopT-0.15){a.pause();
           clearInterval(watcherRef.current);watcherRef.current=null;}
       },60);};
-    if(a.readyState>=1)begin();
-    else a.addEventListener("loadedmetadata",begin,{once:true});
+    if(a.readyState>=1)seek();
+    else a.addEventListener("loadedmetadata",seek,{once:true});
+    a.play().catch(()=>{});
   }
   /* Reveal on a synced round: let the real recording sing the answer. */
   function playTheLine(){
@@ -3614,7 +3616,7 @@ function FinishTheLyric({songs,onBack}){
         pool.length+" songs are ready to play."),
       e("button",{style:gameBtn,onClick:newRound},"▶ First lyric")),
     body,
-    e("audio",{ref:audioRef,preload:"none",style:{display:"none"}}));
+    e("audio",{ref:audioRef,preload:"auto",style:{display:"none"}}));
 }
 
 function MusicalChairs({songs,onBack}){
@@ -3649,11 +3651,13 @@ function MusicalChairs({songs,onBack}){
     setCurrent(song);
     scheduleStop();   // the round clock runs even if the audio is still loading
     a.src=song.audioUrl;
-    const begin=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
-      try{a.currentTime=st;}catch(_){}
-      a.play().catch(()=>{});};
-    if(a.readyState>=1)begin();
-    else a.addEventListener("loadedmetadata",begin,{once:true});
+    // Play IMMEDIATELY (inside the tap) — play() also starts the load; the
+    // seek to previewStart lands as soon as the file's metadata arrives.
+    const seek=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
+      try{a.currentTime=st;}catch(_){}};
+    if(a.readyState>=1)seek();
+    else a.addEventListener("loadedmetadata",seek,{once:true});
+    a.play().catch(()=>{});
   }
   function start(){stopPreview();setRounds(0);
     orderRef.current=shuffleArr(pool);setState("playing");playSong(nextSong());}
@@ -3714,7 +3718,9 @@ function MusicalChairs({songs,onBack}){
       e("div",{style:{fontSize:15,opacity:.75,marginTop:22}},"Tap anywhere for the next round ▶"),
       e("button",{onClick:ev=>{ev.stopPropagation();end();},
         style:Object.assign({},gameGhost,{marginTop:26,borderColor:"#fff",color:"#fff"})},"⏹ End game")),
-    e("audio",{ref:audioRef,preload:"none",style:{display:"none"}}));
+    e("audio",{ref:audioRef,preload:"auto",
+      onEnded:()=>{if(state==="playing")playSong(nextSong());},
+      style:{display:"none"}}));
 }
 
 function GamesTab({songs,loading}){
