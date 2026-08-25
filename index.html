@@ -3761,6 +3761,7 @@ function VanishingChorus({songs,onBack}){
   const [hidden,setHidden]=useState(()=>new Set());
   const [auto,setAuto]=useState(false);
   const [tick,setTick]=useState(0);   // re-render for the play/pause icon
+  const [audioNote,setAudioNote]=useState("");
   const audioRef=React.useRef(null);
   const loadedRef=React.useRef(null);
   useEffect(()=>()=>{const a=audioRef.current;if(a)a.pause();},[]);
@@ -3785,7 +3786,9 @@ function VanishingChorus({songs,onBack}){
     const seek=()=>{try{a.currentTime=startT;}catch(_){}};
     if(a.readyState>=1)seek();
     else a.addEventListener("loadedmetadata",seek,{once:true});
-    a.play().catch(()=>{});   // inside the tap — see the silent-audio fix
+    // inside the tap — see the silent-audio fix
+    a.play().then(()=>setAudioNote("")).catch(()=>
+      setAudioNote("⚠ The browser held the music back — tap ▶ Play."));
   }
   function pickSong(s){
     const sts=splitStanzas(s.lyrics);
@@ -3822,8 +3825,10 @@ function VanishingChorus({songs,onBack}){
     e("p",{style:{color:C.src,fontSize:15,lineHeight:1.6}},"No songs with lyrics in the library yet."),
     e("button",{style:gameGhost,onClick:onBack},"← Back"));
 
-  // ── Song picker ──
-  if(!song)return e("div",{style:{maxWidth:720,margin:"0 auto",padding:"26px 16px 46px"}},
+  // ── Song picker ── (the <audio> lives OUTSIDE both screens, in the final
+  // return, so it already exists when a song is picked — otherwise the very
+  // first play command fires before the player is on the page and dies.)
+  const pickerScreen=e("div",{style:{maxWidth:720,margin:"0 auto",padding:"26px 16px 46px"}},
     e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
       e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),onClick:onBack},"← Games"),
       e("h2",{style:{margin:0,fontSize:22,color:C.gold}},"🌫️ Vanishing Chorus")),
@@ -3846,7 +3851,7 @@ function VanishingChorus({songs,onBack}){
   // ── Play screen ──
   const a=audioRef.current;
   const isPlaying=a&&!a.paused;
-  return e("div",{style:{maxWidth:860,margin:"0 auto",padding:"26px 16px 46px",textAlign:"center"}},
+  const playScreen=song&&e("div",{style:{maxWidth:860,margin:"0 auto",padding:"26px 16px 46px",textAlign:"center"}},
     e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}},
       e("button",{style:Object.assign({},gameGhost,{padding:"8px 14px",fontSize:13}),
         onClick:()=>{const x=audioRef.current;if(x)x.pause();setSong(null);}},"← Songs"),
@@ -3879,15 +3884,21 @@ function VanishingChorus({songs,onBack}){
     e("div",{style:{display:"flex",gap:9,justifyContent:"center",flexWrap:"wrap",alignItems:"center"}},
       e("button",{style:gameBtn,onClick:vanish},"🌫️ Vanish a few"),
       e("button",{style:gameGhost,onClick:()=>{const x=audioRef.current;if(!x)return;
-        if(x.paused){x.play().catch(()=>{});}else x.pause();setTick(t=>t+1);}},
+        if(!x.src||x.error){playFromStanza(song,stanza);}
+        else if(x.paused){x.play().catch(()=>{});}else x.pause();setTick(t=>t+1);}},
         isPlaying?"⏸ Pause":"▶ Play"),
       song.audioUrl&&e("button",{style:gameGhost,onClick:()=>playFromStanza(song,stanza)},"↻ From the top"),
       e("button",{style:gameGhost,onClick:()=>setHidden(new Set())},"👁 Show all"),
       e("label",{style:{fontSize:13.5,color:C.src,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}},
         e("input",{type:"checkbox",checked:auto,onChange:ev=>setAuto(ev.target.checked)}),
         "Auto — a few every 4s")),
+    audioNote&&e("div",{style:{fontSize:14,color:C.gold,marginTop:12,fontWeight:"bold"}},audioNote));
+
+  return e("div",null,
+    song?playScreen:pickerScreen,
     e("audio",{ref:audioRef,preload:"auto",style:{display:"none"},
-      onPlay:()=>setTick(t=>t+1),onPause:()=>setTick(t=>t+1)}));
+      onPlay:()=>setTick(t=>t+1),onPause:()=>setTick(t=>t+1),
+      onError:()=>setAudioNote("⚠ Couldn't load the audio — the words still work; tap ▶ Play to retry.")}));
 }
 
 function GamesTab({songs,loading}){
