@@ -193,6 +193,7 @@ function stopPreview(){
 function playPreview(song,onEnd){
   if(!previewAudio||!song.audioUrl)return;
   stopPreview();
+  shufflePlayer.stop(); // a preview takes over from shuffle play
   previewOnEnd=onEnd||null;
   const start=Math.max(0,parseInt(song.previewStart,10)||0);
   previewAudio.src=song.audioUrl;
@@ -201,6 +202,95 @@ function playPreview(song,onEnd){
     previewStopTimer=setTimeout(stopPreview,PREVIEW_SECONDS*1000);};
   if(previewAudio.readyState>=1)begin();
   else previewAudio.addEventListener("loadedmetadata",begin,{once:true});
+}
+
+/* ------------- 🔀 Shuffle play: whole songs, random order, non-stop -------------
+   One module-level player so the music keeps going while you browse other tabs.
+   When the queue runs dry it reshuffles and keeps playing, forever. Any other
+   audio starting anywhere in the app (song players, games, previews) stops it,
+   so two things never play at once. */
+const shufflePlayer={
+  el:typeof Audio!=="undefined"?new Audio():null,
+  pool:[],queue:[],song:null,on:false,paused:false,errors:0,
+  listeners:new Set(),
+  emit(){const s={on:this.on,song:this.song,paused:this.paused};
+    this.listeners.forEach(f=>{try{f(s);}catch(_){}});
+    this.mediaSession();},
+  start(pool){
+    if(!this.el||!pool.length)return;
+    stopPreview();
+    this.pool=pool.slice();this.queue=[];this.errors=0;
+    this.on=true;this.paused=false;this.song=null;
+    this.next();
+  },
+  next(){
+    if(!this.on||!this.el)return;
+    if(!this.queue.length){
+      this.queue=shuffleArr(this.pool);
+      // Fresh shuffle: don't let the song that just ended play twice in a row.
+      if(this.queue.length>1&&this.song&&this.queue[0].id===this.song.id)
+        this.queue.push(this.queue.shift());
+    }
+    this.song=this.queue.shift();this.paused=false;
+    this.el.src=this.song.audioUrl;
+    try{this.el.currentTime=0;}catch(_){}
+    this.el.play().then(()=>{this.errors=0;})
+      .catch(()=>{this.paused=true;this.emit();}); // blocked → bar shows ▶ to resume
+    this.emit();
+  },
+  toggle(){
+    if(!this.on||!this.el)return;
+    if(this.el.paused){this.el.play().catch(()=>{});this.paused=false;}
+    else{this.el.pause();this.paused=true;}
+    this.emit();
+  },
+  stop(){
+    if(!this.on)return;
+    this.on=false;this.song=null;this.queue=[];this.paused=false;
+    if(this.el){this.el.pause();this.el.removeAttribute("src");try{this.el.load();}catch(_){}}
+    this.emit();
+  },
+  mediaSession(){ // lock-screen / earbud controls on phones
+    try{
+      if(!("mediaSession" in navigator))return;
+      const ms=navigator.mediaSession;
+      if(this.on&&this.song){
+        ms.metadata=new MediaMetadata({title:this.song.title,
+          artist:this.song.speaker&&this.song.speaker!=="—"?this.song.speaker:"Conference as a Concert",
+          album:"Conference as a Concert",
+          artwork:[{src:"icon-512.png",sizes:"512x512",type:"image/png"}]});
+        ms.setActionHandler("play",()=>this.toggle());
+        ms.setActionHandler("pause",()=>this.toggle());
+        ms.setActionHandler("nexttrack",()=>this.next());
+      }else{ms.metadata=null;}
+    }catch(_){}
+  }
+};
+if(shufflePlayer.el){
+  shufflePlayer.el.addEventListener("ended",()=>shufflePlayer.next());
+  shufflePlayer.el.addEventListener("error",()=>{
+    if(!shufflePlayer.on)return;
+    // A song that won't load gets skipped; if everything is failing, stop
+    // instead of spinning through the library at machine speed.
+    shufflePlayer.errors++;
+    if(shufflePlayer.errors>=Math.max(3,shufflePlayer.pool.length))shufflePlayer.stop();
+    else shufflePlayer.next();
+  });
+  // Keep the bar in step when the lock screen / earbuds pause or resume us.
+  shufflePlayer.el.addEventListener("pause",()=>{
+    if(shufflePlayer.on&&!shufflePlayer.el.ended&&!shufflePlayer.paused){
+      shufflePlayer.paused=true;shufflePlayer.emit();}});
+  shufflePlayer.el.addEventListener("play",()=>{
+    if(shufflePlayer.on&&shufflePlayer.paused){
+      shufflePlayer.paused=false;shufflePlayer.emit();}});
+}
+/* Any in-page audio element starting (a song's player, a game, a lyric-sync
+   round) takes the speaker — shuffle bows out. Capture phase, because media
+   events don't bubble. */
+if(typeof document!=="undefined"){
+  document.addEventListener("play",(ev)=>{
+    if(shufflePlayer.on&&ev.target!==shufflePlayer.el)shufflePlayer.stop();
+  },true);
 }
 
 const CONCERT_MIN_SECONDS=15*60;   // slider floor: 15 minutes
@@ -1023,6 +1113,72 @@ function OfflineShelf(){
 }
 
 /* ---------------------------------------------------------- Library */
+/* Library toolbar button — one tap starts non-stop random play of every song
+   that has audio. */
+function ShuffleAllButton({songs}){
+  const [on,setOn]=useState(shufflePlayer.on);
+  useEffect(()=>{const f=s=>setOn(s.on);shufflePlayer.listeners.add(f);
+    return()=>{shufflePlayer.listeners.delete(f);};},[]);
+  const pool=songs.filter(s=>s.audioUrl);
+  if(!pool.length)return null;
+  return e("button",{
+    onClick:()=>{ if(on)shufflePlayer.stop(); else shufflePlayer.start(pool); },
+    "aria-pressed":on,
+    title:on?"Stop shuffle play":"Play the whole library in random order, non-stop",
+    style:{padding:"7px 16px",fontSize:14,borderRadius:20,fontWeight:"bold",
+      border:`1.5px solid ${C.gold}`,background:on?"transparent":C.gold,
+      color:on?C.gold:"#0A1628",whiteSpace:"nowrap",cursor:"pointer"}},
+    on?"◼ Stop shuffle":"🔀 Shuffle play");
+}
+
+/* Fixed now-playing bar shown while shuffle play is on — it follows you across
+   tabs so the music keeps going while you browse. */
+function ShuffleBar(){
+  const [st,setSt]=useState({on:shufflePlayer.on,song:shufflePlayer.song,
+    paused:shufflePlayer.paused});
+  const fillRef=React.useRef(null);
+  useEffect(()=>{const f=s=>setSt(s);shufflePlayer.listeners.add(f);
+    return()=>{shufflePlayer.listeners.delete(f);};},[]);
+  useEffect(()=>{ // progress line, written straight to the DOM (no re-renders)
+    const a=shufflePlayer.el;if(!a)return;
+    const tick=()=>{ if(fillRef.current&&isFinite(a.duration)&&a.duration>0)
+      fillRef.current.style.width=(a.currentTime/a.duration*100)+"%"; };
+    a.addEventListener("timeupdate",tick);
+    return()=>a.removeEventListener("timeupdate",tick);
+  },[]);
+  if(!st.on||!st.song)return null;
+  const btn={width:44,height:44,borderRadius:"50%",border:0,fontSize:17,
+    background:C.gold,color:"#0A1628",cursor:"pointer",flexShrink:0};
+  return e(React.Fragment,null,
+    e("div",{style:{height:86}}), // room so page content can scroll above the bar
+    e("div",{role:"region","aria-label":"Shuffle play",
+      style:{position:"fixed",left:0,right:0,bottom:0,zIndex:60,
+        background:C.brown,borderTop:`1.5px solid ${C.gold}`,
+        boxShadow:"0 -6px 18px rgba(0,0,0,.45)",
+        paddingBottom:"env(safe-area-inset-bottom)"}},
+      e("div",{style:{height:3,background:C.line}},
+        e("div",{ref:fillRef,style:{height:"100%",width:0,background:C.gold}})),
+      e("div",{style:{maxWidth:920,margin:"0 auto",display:"flex",gap:12,
+        alignItems:"center",padding:"10px 16px"}},
+        e("div",{style:{flex:1,minWidth:0}},
+          e("div",{style:{fontSize:11,letterSpacing:"0.18em",textTransform:"uppercase",
+            color:C.gold}},"🔀 Shuffle play"),
+          e("div",{style:{fontWeight:"bold",color:C.text,fontSize:15,whiteSpace:"nowrap",
+            overflow:"hidden",textOverflow:"ellipsis"}},st.song.title),
+          st.song.speaker&&st.song.speaker!=="—"&&e("div",{style:{fontSize:12,
+            color:C.src,whiteSpace:"nowrap",overflow:"hidden",
+            textOverflow:"ellipsis"}},st.song.speaker)),
+        e("button",{onClick:()=>shufflePlayer.toggle(),style:btn,
+          "aria-label":st.paused?"Play":"Pause"},st.paused?"▶":"❚❚"),
+        e("button",{onClick:()=>shufflePlayer.next(),style:{...btn,
+          background:"transparent",border:`1.5px solid ${C.gold}`,color:C.gold},
+          "aria-label":"Next song"},"⏭"),
+        e("button",{onClick:()=>shufflePlayer.stop(),style:{width:34,height:34,
+          borderRadius:"50%",border:`1.5px solid ${C.line}`,background:"transparent",
+          color:C.src,cursor:"pointer",flexShrink:0,fontSize:14},
+          "aria-label":"Stop shuffle play"},"✕"))));
+}
+
 function Library({songs,loading,error,onReload,focusId}){
   const [group,setGroup]=useState("session");
   const [query,setQuery]=useState("");
@@ -1062,6 +1218,7 @@ function Library({songs,loading,error,onReload,focusId}){
             border:`1.5px solid ${group===g.key?C.gold:C.line}`,
             background:group===g.key?C.gold:C.paper,
             color:group===g.key?"#0A1628":C.text}},g.label))),
+      e(ShuffleAllButton,{songs}),
       e("input",{type:"search",value:query,onChange:ev=>setQuery(ev.target.value),
         placeholder:"Search title, talk, speaker…","aria-label":"Search songs",
         style:{flex:"1 1 220px",maxWidth:300,padding:"9px 14px",fontSize:15,
@@ -4662,6 +4819,7 @@ function App(){
     tab==="inbox"&&e(SuggestionsInbox),
     tab==="requests"&&e(AccessInbox),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();},onBandChange}),
+    e(ShuffleBar),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
       borderTop:`1px solid ${C.line}`,background:C.paper}},
       e("div",{style:{marginBottom:14,display:"flex",gap:10,justifyContent:"center",
