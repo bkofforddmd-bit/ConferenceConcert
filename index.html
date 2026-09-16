@@ -211,15 +211,15 @@ function playPreview(song,onEnd){
    so two things never play at once. */
 const shufflePlayer={
   el:typeof Audio!=="undefined"?new Audio():null,
-  pool:[],queue:[],song:null,on:false,paused:false,errors:0,
+  pool:[],queue:[],song:null,on:false,paused:false,errors:0,mode:"all",
   listeners:new Set(),
-  emit(){const s={on:this.on,song:this.song,paused:this.paused};
+  emit(){const s={on:this.on,song:this.song,paused:this.paused,mode:this.mode};
     this.listeners.forEach(f=>{try{f(s);}catch(_){}});
     this.mediaSession();},
-  start(pool){
+  start(pool,mode){
     if(!this.el||!pool.length)return;
     stopPreview();
-    this.pool=pool.slice();this.queue=[];this.errors=0;
+    this.pool=pool.slice();this.queue=[];this.errors=0;this.mode=mode||"all";
     this.on=true;this.paused=false;this.song=null;
     this.next();
   },
@@ -291,6 +291,42 @@ if(typeof document!=="undefined"){
   document.addEventListener("play",(ev)=>{
     if(shufflePlayer.on&&ev.target!==shufflePlayer.el)shufflePlayer.stop();
   },true);
+}
+
+/* ------------------- ⭐ My Favorites: starred songs, saved on this device -------------------
+   Song ids in localStorage, with a tiny pub/sub so every star button on the
+   page stays in step the moment one is tapped. */
+const FAV_LS_KEY="cac_favorites";
+const favStore={
+  ids:(()=>{try{const v=JSON.parse(localStorage_get(FAV_LS_KEY)||"[]");
+    return new Set(Array.isArray(v)?v:[]);}catch(_){return new Set();}})(),
+  listeners:new Set(),
+  has(id){return this.ids.has(id);},
+  count(){return this.ids.size;},
+  toggle(id){
+    if(this.ids.has(id))this.ids.delete(id);else this.ids.add(id);
+    try{localStorage.setItem(FAV_LS_KEY,JSON.stringify([...this.ids]));}catch(_){}
+    this.listeners.forEach(f=>{try{f();}catch(_){}});
+  }
+};
+/* Re-render the calling component whenever the favorites change anywhere. */
+function useFavs(){
+  const [tick,setTick]=useState(0);
+  useEffect(()=>{const f=()=>setTick(t=>t+1);favStore.listeners.add(f);
+    return()=>{favStore.listeners.delete(f);};},[]);
+  return tick;
+}
+function FavStar({song,size,style}){
+  useFavs();
+  const fav=favStore.has(song.id);
+  return e("button",{
+    onClick:(ev)=>{ev.stopPropagation();favStore.toggle(song.id);},
+    "aria-pressed":fav,"aria-label":fav?"Remove from My Favorites":"Add to My Favorites",
+    title:fav?"Remove from My Favorites":"Add to My Favorites",
+    style:{background:"transparent",border:0,cursor:"pointer",padding:6,
+      fontSize:size||20,lineHeight:1,color:fav?C.gold:"#54688F",
+      transition:"color .15s",...(style||{})}},
+    fav?"★":"☆");
 }
 
 const CONCERT_MIN_SECONDS=15*60;   // slider floor: 15 minutes
@@ -1065,19 +1101,21 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
     border:`1.5px solid ${open?C.gold:C.line}`,
     boxShadow:open?"0 6px 20px rgba(44,26,14,.12)":"0 1px 3px rgba(44,26,14,.06)",
     overflow:"hidden",transition:"border-color .15s,box-shadow .15s"}},
-    e("button",{onClick:onToggle,"aria-expanded":open,
-      style:{width:"100%",textAlign:"left",background:"transparent",border:0,
-        padding:"16px 18px",display:"flex",gap:14,alignItems:"flex-start"}},
-      e("div",{style:{flex:1,minWidth:0}},
-        e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
-          e("span",{style:{fontSize:19,fontWeight:"bold",color:C.gold}},song.title),
-          e("span",{style:{fontSize:11,color:"#fff",background:badgeColor,
-            padding:"2px 9px",borderRadius:12}},badge)),
-        song.talk&&e("div",{style:{fontSize:14,color:C.text,marginTop:5,fontStyle:"italic"}},
-          "from “"+song.talk+"”"+(song.speaker&&song.speaker!=="—"?" · "+song.speaker:"")),
-        song.blurb&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:6,lineHeight:1.5}},song.blurb)),
-      e("span",{"aria-hidden":true,style:{fontSize:20,color:C.gold,
-        transform:open?"rotate(180deg)":"none",transition:"transform .2s",marginTop:2}},"⌄")),
+    e("div",{style:{display:"flex",alignItems:"flex-start"}},
+      e("button",{onClick:onToggle,"aria-expanded":open,
+        style:{flex:1,minWidth:0,textAlign:"left",background:"transparent",border:0,
+          padding:"16px 0 16px 18px",display:"flex",gap:14,alignItems:"flex-start"}},
+        e("div",{style:{flex:1,minWidth:0}},
+          e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+            e("span",{style:{fontSize:19,fontWeight:"bold",color:C.gold}},song.title),
+            e("span",{style:{fontSize:11,color:"#fff",background:badgeColor,
+              padding:"2px 9px",borderRadius:12}},badge)),
+          song.talk&&e("div",{style:{fontSize:14,color:C.text,marginTop:5,fontStyle:"italic"}},
+            "from “"+song.talk+"”"+(song.speaker&&song.speaker!=="—"?" · "+song.speaker:"")),
+          song.blurb&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:6,lineHeight:1.5}},song.blurb)),
+        e("span",{"aria-hidden":true,style:{fontSize:20,color:C.gold,
+          transform:open?"rotate(180deg)":"none",transition:"transform .2s",marginTop:2}},"⌄")),
+      e(FavStar,{song,style:{margin:"12px 10px 0 4px"}})),
     open&&!editing&&e("div",null,
       e(Player,{song}),
       canEdit&&e("div",{style:{padding:"0 20px 16px"}},
@@ -1116,13 +1154,13 @@ function OfflineShelf(){
 /* Library toolbar button — one tap starts non-stop random play of every song
    that has audio. */
 function ShuffleAllButton({songs}){
-  const [on,setOn]=useState(shufflePlayer.on);
-  useEffect(()=>{const f=s=>setOn(s.on);shufflePlayer.listeners.add(f);
+  const [on,setOn]=useState(shufflePlayer.on&&shufflePlayer.mode==="all");
+  useEffect(()=>{const f=s=>setOn(s.on&&s.mode==="all");shufflePlayer.listeners.add(f);
     return()=>{shufflePlayer.listeners.delete(f);};},[]);
   const pool=songs.filter(s=>s.audioUrl);
   if(!pool.length)return null;
   return e("button",{
-    onClick:()=>{ if(on)shufflePlayer.stop(); else shufflePlayer.start(pool); },
+    onClick:()=>{ if(on)shufflePlayer.stop(); else shufflePlayer.start(pool,"all"); },
     "aria-pressed":on,
     title:on?"Stop shuffle play":"Play the whole library in random order, non-stop",
     style:{padding:"7px 16px",fontSize:14,borderRadius:20,fontWeight:"bold",
@@ -1131,11 +1169,30 @@ function ShuffleAllButton({songs}){
     on?"◼ Stop shuffle":"🔀 Shuffle play");
 }
 
+/* Its sibling — shuffles only the songs you've starred. Appears once you
+   have at least one favorite with audio. */
+function PlayFavoritesButton({songs}){
+  useFavs();
+  const [on,setOn]=useState(shufflePlayer.on&&shufflePlayer.mode==="favorites");
+  useEffect(()=>{const f=s=>setOn(s.on&&s.mode==="favorites");shufflePlayer.listeners.add(f);
+    return()=>{shufflePlayer.listeners.delete(f);};},[]);
+  const pool=songs.filter(s=>s.audioUrl&&favStore.has(s.id));
+  if(!pool.length)return null;
+  return e("button",{
+    onClick:()=>{ if(on)shufflePlayer.stop(); else shufflePlayer.start(pool,"favorites"); },
+    "aria-pressed":on,
+    title:on?"Stop playing favorites":"Shuffle just your starred songs, non-stop",
+    style:{padding:"7px 16px",fontSize:14,borderRadius:20,fontWeight:"bold",
+      border:`1.5px solid ${C.gold}`,background:"transparent",color:C.gold,
+      whiteSpace:"nowrap",cursor:"pointer"}},
+    on?"◼ Stop favorites":"★ Play favorites ("+pool.length+")");
+}
+
 /* Fixed now-playing bar shown while shuffle play is on — it follows you across
    tabs so the music keeps going while you browse. */
 function ShuffleBar(){
   const [st,setSt]=useState({on:shufflePlayer.on,song:shufflePlayer.song,
-    paused:shufflePlayer.paused});
+    paused:shufflePlayer.paused,mode:shufflePlayer.mode});
   const fillRef=React.useRef(null);
   useEffect(()=>{const f=s=>setSt(s);shufflePlayer.listeners.add(f);
     return()=>{shufflePlayer.listeners.delete(f);};},[]);
@@ -1162,12 +1219,13 @@ function ShuffleBar(){
         alignItems:"center",padding:"10px 16px"}},
         e("div",{style:{flex:1,minWidth:0}},
           e("div",{style:{fontSize:11,letterSpacing:"0.18em",textTransform:"uppercase",
-            color:C.gold}},"🔀 Shuffle play"),
+            color:C.gold}},st.mode==="favorites"?"★ My favorites":"🔀 Shuffle play"),
           e("div",{style:{fontWeight:"bold",color:C.text,fontSize:15,whiteSpace:"nowrap",
             overflow:"hidden",textOverflow:"ellipsis"}},st.song.title),
           st.song.speaker&&st.song.speaker!=="—"&&e("div",{style:{fontSize:12,
             color:C.src,whiteSpace:"nowrap",overflow:"hidden",
             textOverflow:"ellipsis"}},st.song.speaker)),
+        e(FavStar,{song:st.song,size:24,style:{flexShrink:0}}),
         e("button",{onClick:()=>shufflePlayer.toggle(),style:btn,
           "aria-label":st.paused?"Play":"Pause"},st.paused?"▶":"❚❚"),
         e("button",{onClick:()=>shufflePlayer.next(),style:{...btn,
@@ -1183,6 +1241,8 @@ function Library({songs,loading,error,onReload,focusId}){
   const [group,setGroup]=useState("session");
   const [query,setQuery]=useState("");
   const [openId,setOpenId]=useState(null);
+  const [favOnly,setFavOnly]=useState(false);
+  const favTick=useFavs(); // re-filter when stars change
   const canEdit=!!sessionStorage.getItem("cac_pw");
   // Open a song that was deep-linked via ?song=ID, once songs have loaded.
   useEffect(()=>{
@@ -1193,11 +1253,12 @@ function Library({songs,loading,error,onReload,focusId}){
     }
   },[focusId,songs]);
   const filtered=useMemo(()=>{
+    const base=favOnly?songs.filter(s=>favStore.has(s.id)):songs;
     const q=query.trim().toLowerCase();
-    if(!q)return songs;
-    return songs.filter(s=>[s.title,s.talk,s.speaker,s.theme,s.session,s.style]
+    if(!q)return base;
+    return base.filter(s=>[s.title,s.talk,s.speaker,s.theme,s.session,s.style]
       .filter(Boolean).join(" ").toLowerCase().includes(q));
-  },[query,songs]);
+  },[query,songs,favOnly,favTick]);
   const groups=useMemo(()=>{
     if(group==="flat")return[{name:null,items:filtered}];
     const map=new Map();
@@ -1219,6 +1280,15 @@ function Library({songs,loading,error,onReload,focusId}){
             background:group===g.key?C.gold:C.paper,
             color:group===g.key?"#0A1628":C.text}},g.label))),
       e(ShuffleAllButton,{songs}),
+      e(PlayFavoritesButton,{songs}),
+      favStore.count()>0&&e("button",{onClick:()=>setFavOnly(v=>!v),
+        "aria-pressed":favOnly,
+        title:favOnly?"Show the whole library":"Show only your starred songs",
+        style:{padding:"7px 14px",fontSize:14,borderRadius:20,
+          border:`1.5px solid ${favOnly?C.gold:C.line}`,
+          background:favOnly?C.gold:C.paper,color:favOnly?"#0A1628":C.text,
+          whiteSpace:"nowrap",cursor:"pointer"}},
+        "★ Favorites"),
       e("input",{type:"search",value:query,onChange:ev=>setQuery(ev.target.value),
         placeholder:"Search title, talk, speaker…","aria-label":"Search songs",
         style:{flex:"1 1 220px",maxWidth:300,padding:"9px 14px",fontSize:15,
@@ -1231,7 +1301,9 @@ function Library({songs,loading,error,onReload,focusId}){
     error&&e("p",{style:{textAlign:"center",color:"#E66A5C",padding:"20px 0"}},error),
     !loading&&!error&&filtered.length===0&&e("p",{style:{textAlign:"center",color:C.src,
       fontStyle:"italic",padding:"40px 0"}},
-      songs.length===0?"No songs yet — the band will add the first one soon.":"No songs match your search."),
+      songs.length===0?"No songs yet — the band will add the first one soon."
+        :favOnly?"None of your starred songs match — tap ★ Favorites again to see the whole library."
+        :"No songs match your search."),
     groups.map((g,gi)=>e("section",{key:g.name||gi,style:{marginTop:gi?34:18}},
       g.name&&e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
         color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,marginBottom:14}},
