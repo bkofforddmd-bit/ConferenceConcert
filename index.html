@@ -76,6 +76,53 @@ function ShareButton({title,text,url,label,small,style}){
 }
 
 const API = "/.netlify/functions";
+
+// 🔊 Play on Sonos — opens the Sonos Bridge (a small program on the home laptop,
+// see Desktop\Sonos Bridge) with this song or concert preloaded. Home Wi-Fi only.
+const SONOS_KEY="sonosBridge";
+const SONOS_DEFAULT="192.168.1.237:5005";
+const sonosAddr=()=>{try{return (localStorage.getItem(SONOS_KEY)||"").trim();}catch(_){return "";}};
+function SonosButton({app,song,concert,small,style}){
+  const [editing,setEditing]=useState(false);
+  const [addr,setAddr]=useState(()=>sonosAddr()||SONOS_DEFAULT);
+  const clean=a=>a.trim().replace(/^https?:\/\//i,"").replace(/\/+$/,"");
+  function link(a){
+    const q=new URLSearchParams({app});
+    if(concert)q.set("concert",concert); else if(song)q.set("song",song);
+    return "http://"+clean(a)+"/?"+q.toString();
+  }
+  function go(ev){
+    ev&&ev.stopPropagation();
+    const a=sonosAddr();
+    if(!a){setEditing(true);return;}
+    window.open(link(a),"_blank","noopener");
+  }
+  function save(ev){
+    ev&&ev.stopPropagation();
+    const a=clean(addr); if(!a)return;
+    try{localStorage.setItem(SONOS_KEY,a);}catch(_){}
+    setEditing(false);
+    window.open(link(a),"_blank","noopener");
+  }
+  const btn={padding:small?"4px 12px":"8px 16px",fontSize:small?12:14,borderRadius:small?16:8,
+    border:`1.5px solid ${C.blue}`,background:"transparent",color:C.blue,whiteSpace:"nowrap",cursor:"pointer"};
+  return e("span",{style:{display:"inline-flex",alignItems:"center",gap:6,flexWrap:"wrap"},
+      onClick:ev=>ev.stopPropagation()},
+    e("button",{onClick:go,title:"Play on the house Sonos (home Wi-Fi only)",
+      style:Object.assign({},btn,style||{})},"🔊 Sonos"),
+    !editing&&e("button",{onClick:ev=>{ev.stopPropagation();setEditing(true);},
+      title:"Change the Sonos Bridge address",
+      style:{border:0,background:"transparent",color:C.src,cursor:"pointer",fontSize:12,padding:"0 2px"}},"⚙"),
+    editing&&e("span",{style:{display:"inline-flex",alignItems:"center",gap:6,flexWrap:"wrap"}},
+      e("input",{value:addr,onChange:ev=>setAddr(ev.target.value),placeholder:SONOS_DEFAULT,
+        onKeyDown:ev=>{if(ev.key==="Enter")save(ev);},
+        style:{padding:"4px 8px",fontSize:12,borderRadius:6,border:`1px solid ${C.line}`,width:170}}),
+      e("button",{onClick:save,style:Object.assign({},btn,{padding:"4px 10px",fontSize:12,borderRadius:16})},"Save"),
+      e("button",{onClick:ev=>{ev.stopPropagation();setEditing(false);},
+        style:{border:0,background:"transparent",color:C.src,cursor:"pointer",fontSize:12}},"Cancel"),
+      e("span",{style:{fontSize:11,color:C.src,width:"100%"}},
+        "Sonos Bridge address, as shown in its window on the home laptop. Works only on the home Wi-Fi.")));
+}
 const GROUPINGS = [
   {key:"session",label:"Session"},{key:"speaker",label:"Speaker"},
   {key:"theme",label:"Theme"},{key:"flat",label:"All songs"},
@@ -998,7 +1045,8 @@ function Player({song}){
       e(ShareButton,{small:true,label:"Share song",
         title:"Conference as a Concert",
         url:location.origin+location.pathname+"?song="+encodeURIComponent(song.id),
-        text:"♪ “"+song.title+"”"+(song.talk?" — from “"+song.talk+"”":"")+" on Conference as a Concert"})),
+        text:"♪ “"+song.title+"”"+(song.talk?" — from “"+song.talk+"”":"")+" on Conference as a Concert"}),
+      e(SonosButton,{app:"conference",song:song.id,small:true})),
   );
 }
 
@@ -3250,6 +3298,7 @@ function ConcertBuilder({songs,loading}){
                     title:"A Concert — Conference as a Concert",
                     text:"🎶 Listen to “"+(name||"my concert")+"” — a concert I built on Conference as a Concert",
                     url:shareUrl}),
+                  e(SonosButton,{app:"conference",concert:(shareUrl.match(/concert=([a-z0-9]+)/i)||[])[1],small:true}),
                   e("button",{onClick:()=>{navigator.clipboard&&navigator.clipboard.writeText(shareUrl);},
                     style:{padding:"8px 16px",fontSize:13,borderRadius:8,border:0,
                       background:C.blue,color:"#0A1628"}},"Copy link"),
@@ -3600,6 +3649,7 @@ function ConcertPlayer({id}){
         title:"A Concert — Conference as a Concert",
         text:"🎶 Listen to “"+(data.name||"this concert")+"” on Conference as a Concert",
         url:location.href}),
+      e(SonosButton,{app:"conference",concert:id}),
       e("button",{onClick:back,style:{padding:"9px 18px",fontSize:13,borderRadius:8,
         border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
         "← Back to the library")),
