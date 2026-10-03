@@ -3441,7 +3441,7 @@ function RoadTripKit({id,data,fromOffline}){
   );
 }
 
-function ConcertPlayer({id}){
+function ConcertPlayer({id,focusSongId}){
   const [data,setData]=useState(null);
   const [error,setError]=useState("");
   const [idx,setIdx]=useState(-1); // -1 = not started
@@ -3498,6 +3498,16 @@ function ConcertPlayer({id}){
   const songs=data?data.songs:[];
   const current=idx>=0?songs[idx]:null;
   const curVid=current?ytId(current.youtube):null;
+
+  // A shared single-song link (?concert=...&song=...) opens the concert cued
+  // to that song. Cue once, on first load — after that the page behaves like
+  // any concert (Next continues down the set list).
+  const cuedRef=React.useRef(false);
+  useEffect(()=>{
+    if(cuedRef.current||!focusSongId||!data)return;
+    const i=(data.songs||[]).findIndex(s=>s.id===focusSongId);
+    if(i>=0){cuedRef.current=true;setIdx(i);}
+  },[data]);
 
   // Drive audio playback when the current (audio) song changes.
   useEffect(()=>{
@@ -3595,7 +3605,18 @@ function ConcertPlayer({id}){
                       delay:current.lyricsDelay==null?35:current.lyricsDelay,
                       endBuffer:current.lyricsEnd==null?30:current.lyricsEnd}))
                 : e("div",{style:{padding:"20px",textAlign:"center",color:C.src,
-                    fontStyle:"italic",marginTop:14}},"(No media for this song yet)")),
+                    fontStyle:"italic",marginTop:14}},"(No media for this song yet)"),
+
+            /* share just this song — the link opens the concert cued to it */
+            e("div",{style:{marginTop:16,display:"flex",gap:10,alignItems:"center",
+              flexWrap:"wrap"}},
+              e(ShareButton,{small:true,label:"Share this song",
+                title:"Conference as a Concert",
+                text:"♪ “"+current.title+"”"+(current.talk?" — from “"+current.talk+"”":"")+
+                  " · from the concert “"+(data.name||"A Concert")+"”",
+                url:location.origin+location.pathname+"?concert="+encodeURIComponent(id)+
+                  "&song="+encodeURIComponent(current.id)}),
+              e(SonosButton,{app:"conference",song:current.id,small:true}))),
 
           /* transport */
           e("div",{style:{display:"flex",gap:10,justifyContent:"center",
@@ -3648,7 +3669,7 @@ function ConcertPlayer({id}){
       e(ShareButton,{label:"Share this concert",
         title:"A Concert — Conference as a Concert",
         text:"🎶 Listen to “"+(data.name||"this concert")+"” on Conference as a Concert",
-        url:location.href}),
+        url:location.origin+location.pathname+"?concert="+encodeURIComponent(id)}),
       e(SonosButton,{app:"conference",concert:id}),
       e("button",{onClick:back,style:{padding:"9px 18px",fontSize:13,borderRadius:8,
         border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},
@@ -4921,7 +4942,7 @@ function App(){
   // Shared concert link: skip the tabbed UI, go straight to playback.
   if(concertId)return e("div",null,
     e(Header,{tab:"_concert",setTab:()=>{}}),
-    e(ConcertPlayer,{id:concertId}),
+    e(ConcertPlayer,{id:concertId,focusSongId:songParam}),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
       borderTop:`1px solid ${C.line}`,background:C.paper}},
       e(AboutAI),
