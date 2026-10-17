@@ -1,6 +1,6 @@
 // Minimal service worker — makes the app installable and loads the shell fast.
 // Network-first for everything (so new songs/data always show), falling back to cache.
-const CACHE = "cac-v2";
+const CACHE = "cac-v3";
 const SHELL = ["./", "./index.html", "./logo.png", "./banner.webp", "./icon.png", "./manifest.json"];
 
 self.addEventListener("install", (e) => {

@@ -4,9 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Conference as a Concert — Song Library</title>
-<link rel="icon" type="image/png" href="icon.png" />
-<link rel="apple-touch-icon" href="icon.png" />
-<link rel="manifest" href="manifest.json" />
+<link rel="icon" type="image/png" href="icon.png?v=2" />
+<link rel="apple-touch-icon" href="icon.png?v=2" />
+<link rel="manifest" href="manifest.json?v=2" />
 <meta property="og:title" content="Conference as a Concert" />
 <meta property="og:description" content="General Conference talks, set to music. Stream songs and build your own concert." />
 <meta property="og:image" content="https://conferenceconcert.netlify.app/banner-og.jpg" />
@@ -325,7 +325,7 @@ const shufflePlayer={
         ms.metadata=new MediaMetadata({title:this.song.title,
           artist:this.song.speaker&&this.song.speaker!=="—"?this.song.speaker:"Conference as a Concert",
           album:"Conference as a Concert",
-          artwork:[{src:"icon-512.png",sizes:"512x512",type:"image/png"}]});
+          artwork:[{src:"icon-512.png?v=2",sizes:"512x512",type:"image/png"}]});
         ms.setActionHandler("play",()=>this.toggle());
         ms.setActionHandler("pause",()=>this.toggle());
         ms.setActionHandler("nexttrack",()=>this.next());
