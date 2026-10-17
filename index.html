@@ -7,14 +7,18 @@
 <link rel="icon" type="image/png" href="icon.png" />
 <link rel="apple-touch-icon" href="icon.png" />
 <link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#13294B" />
+<meta property="og:title" content="Conference as a Concert" />
+<meta property="og:description" content="General Conference talks, set to music. Stream songs and build your own concert." />
+<meta property="og:image" content="https://conferenceconcert.netlify.app/banner-og.jpg" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="theme-color" content="#0F1F3D" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Concert" />
 <style>
   :root{
-    --brown:#13294B; --gold:#F2C14E; --cream:#0A1628; --text:#EAF0FA;
-    --blue:#4F9BE8; --src:#9FB4D4; --paper:#162A4A; --line:#2C467A;
+    --brown:#0F1F3D; --gold:#E6BC5C; --cream:#0A1628; --text:#F0E9DA;
+    --blue:#7FAEE8; --src:#9FB4D4; --paper:#142541; --line:#2E4470;
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
@@ -35,8 +39,8 @@
 <script>
 const { useState, useMemo, useEffect } = React;
 const e = React.createElement;
-const C = {brown:"#13294B",gold:"#F2C14E",cream:"#0A1628",text:"#EAF0FA",
-  blue:"#4F9BE8",src:"#9FB4D4",paper:"#162A4A",line:"#2C467A"};
+const C = {brown:"#0F1F3D",gold:"#E6BC5C",cream:"#0A1628",text:"#F0E9DA",
+  blue:"#7FAEE8",src:"#9FB4D4",paper:"#142541",line:"#2E4470"};
 
 // Share a link via the phone's native share sheet; fall back to copying.
 // Returns a short status string for optional UI feedback.
@@ -124,9 +128,25 @@ function SonosButton({app,song,concert,small,style}){
         "Sonos Bridge address, as shown in its window on the home laptop. Works only on the home Wi-Fi.")));
 }
 const GROUPINGS = [
-  {key:"session",label:"Session"},{key:"speaker",label:"Speaker"},
+  {key:"session",label:"Conference"},{key:"speaker",label:"Speaker"},
   {key:"theme",label:"Theme"},{key:"flat",label:"All songs"},
 ];
+/* Which General Conference a song belongs to. The talk's URL is the surest
+   source (…/general-conference/2026/04/…, parsed by gcOrderKey, which also
+   gives the speaking order inside that conference); the free-text "session"
+   field ("April 2026") is the fallback. Returns {year, month, order}, with
+   nulls when nothing can be read. */
+const MONTH_NAMES=["","January","February","March","April","May","June","July",
+  "August","September","October","November","December"];
+function confOf(song){
+  const k=gcOrderKey(song.talkUrl);
+  if(k)return {year:k.year,month:k.month,order:k.val};
+  const txt=String(song.session||"");
+  const y=txt.match(/\b(?:19|20)\d{2}\b/);
+  const mi=MONTH_NAMES.findIndex((n,i)=>i>0&&new RegExp("\\b"+n.slice(0,3),"i").test(txt));
+  const year=y?+y[0]:null,month=mi>0?mi:null;
+  return {year,month,order:year?(year*100+(month||0))*10000:0};
+}
 function ytId(url){if(!url)return null;
   const m=url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);return m?m[1]:null;}
 const PREVIEW_SECONDS=20;
@@ -518,10 +538,10 @@ function lyricBookMain(DATA){
   style.textContent=[
     "*{box-sizing:border-box;margin:0;padding:0}",
     "body{background:#494f5c;font-family:Georgia,'Times New Roman',serif}",
-    ".bar{position:sticky;top:0;z-index:5;background:#13294B;color:#EAF0FA;padding:14px 18px;line-height:1.55;font-size:14px}",
-    ".bar b{color:#F2C14E}",
-    ".bar button{font-family:inherit;font-size:14px;padding:9px 18px;border:0;border-radius:8px;background:#F2C14E;color:#13294B;font-weight:bold;cursor:pointer;margin:8px 10px 0 0}",
-    ".bar button.alt{background:transparent;color:#EAF0FA;border:1.5px solid #4F9BE8}",
+    ".bar{position:sticky;top:0;z-index:5;background:#0F1F3D;color:#F0E9DA;padding:14px 18px;line-height:1.55;font-size:14px}",
+    ".bar b{color:#E6BC5C}",
+    ".bar button{font-family:inherit;font-size:14px;padding:9px 18px;border:0;border-radius:8px;background:#E6BC5C;color:#0F1F3D;font-weight:bold;cursor:pointer;margin:8px 10px 0 0}",
+    ".bar button.alt{background:transparent;color:#F0E9DA;border:1.5px solid #7FAEE8}",
     ".book{display:flex;flex-direction:column;align-items:center;gap:16px;padding:22px 10px 70px;overflow-x:auto}",
     ".sheet{width:11in;height:8.5in;background:#fff;display:flex;flex:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}",
     ".fold{width:0;border-left:1px dashed #ddd;height:100%}",
@@ -532,21 +552,21 @@ function lyricBookMain(DATA){
     ".pg.even .content{left:0.5in;right:0.7in}",
     ".pnum{position:absolute;bottom:0.26in;font-size:10pt;color:#555}",
     ".pg.odd .pnum{right:0.5in}.pg.even .pnum{left:0.5in}",
-    ".shead{border-bottom:1.5px solid #13294B;padding-bottom:7px;margin-bottom:11px}",
-    ".skicker{font-size:9pt;letter-spacing:0.18em;text-transform:uppercase;color:#13294B}",
-    ".stitle{font-size:16pt;font-weight:bold;color:#13294B;line-height:1.2;margin-top:2px}",
+    ".shead{border-bottom:1.5px solid #0F1F3D;padding-bottom:7px;margin-bottom:11px}",
+    ".skicker{font-size:9pt;letter-spacing:0.18em;text-transform:uppercase;color:#0F1F3D}",
+    ".stitle{font-size:16pt;font-weight:bold;color:#0F1F3D;line-height:1.2;margin-top:2px}",
     ".sfrom{font-size:9.5pt;font-style:italic;color:#444;margin-top:4px;line-height:1.35}",
     ".cont{font-size:9.5pt;font-style:italic;color:#555;border-bottom:1px solid #bbb;padding-bottom:5px;margin-bottom:10px}",
     ".line{font-size:11pt;line-height:1.5;min-height:1.5em;white-space:pre-wrap}",
-    ".line.sec{font-size:9pt;font-weight:bold;letter-spacing:0.16em;text-transform:uppercase;color:#13294B;padding-top:4px}",
+    ".line.sec{font-size:9pt;font-weight:bold;letter-spacing:0.16em;text-transform:uppercase;color:#0F1F3D;padding-top:4px}",
     ".nolyr{font-size:11pt;font-style:italic;color:#555}",
-    ".cover{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0.55in;color:#13294B}",
+    ".cover{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0.55in;color:#0F1F3D}",
     ".cover .k{font-size:10pt;letter-spacing:0.3em;text-transform:uppercase}",
     ".cover .t{font-size:26pt;font-weight:bold;line-height:1.15;margin:0.25in 0 0.12in}",
     ".cover .s{font-size:12pt;font-style:italic;color:#333}",
     ".cover .n{font-size:22pt;margin-top:0.35in}",
     ".cover img{max-width:2.9in;height:auto;margin-bottom:0.3in}",
-    ".toch{font-size:13pt;font-weight:bold;color:#13294B;letter-spacing:0.12em;text-transform:uppercase;border-bottom:1.5px solid #13294B;padding-bottom:6px;margin-bottom:12px}",
+    ".toch{font-size:13pt;font-weight:bold;color:#0F1F3D;letter-spacing:0.12em;text-transform:uppercase;border-bottom:1.5px solid #0F1F3D;padding-bottom:6px;margin-bottom:12px}",
     ".tocr{display:flex;align-items:baseline;font-size:11pt;line-height:1.9}",
     ".tocr .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:3.4in}",
     ".tocr .dots{flex:1;border-bottom:1px dotted #999;margin:0 6px;min-width:0.2in}",
@@ -804,10 +824,10 @@ function Header({tab,setTab,bandVersion}){
   return e("header",{style:{background:C.brown,color:C.cream,
     borderBottom:`4px solid ${C.gold}`}},
     e("div",{style:{padding:"26px 20px 8px",textAlign:"center"}},
-      e("img",{src:"logo.png",alt:"Conference as a Concert",
-        style:{maxWidth:"min(360px,80vw)",width:"100%",height:"auto",
-          filter:"drop-shadow(0 4px 14px rgba(0,0,0,.4))"}}),
-      e("div",{style:{fontSize:15,fontStyle:"italic",color:"#E8D9B8",marginTop:6}},
+      e("img",{src:"banner.webp",alt:"Conference as a Concert",
+          style:{maxWidth:"min(820px,100%)",width:"100%",height:"auto",display:"block",
+            margin:"0 auto",borderRadius:14,boxShadow:"0 10px 30px rgba(0,0,0,.45)"}}),
+      e("div",{style:{fontSize:15,fontStyle:"italic",color:"#E8D4A8",marginTop:6}},
         "The Song Library"),
     ),
     e("nav",{style:{display:"flex",justifyContent:"center",gap:4,
@@ -1149,7 +1169,7 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
   const vid=ytId(song.youtube)||(song.videoUrl?"file":null);
   const badge=vid?"▶ Video":(song.audioUrl?"♪ Audio":"Coming soon");
   const badgeColor=vid?C.blue:(song.audioUrl?C.src:"#6B7FA3");
-  return e("div",{id:"song-"+song.id,style:{background:open?C.paper:"#1E3358",borderRadius:12,
+  return e("div",{id:"song-"+song.id,style:{background:open?C.paper:"#182C4D",borderRadius:12,
     border:`1.5px solid ${open?C.gold:C.line}`,
     boxShadow:open?"0 6px 20px rgba(44,26,14,.12)":"0 1px 3px rgba(44,26,14,.06)",
     overflow:"hidden",transition:"border-color .15s,box-shadow .15s"}},
@@ -1311,11 +1331,27 @@ function Library({songs,loading,error,onReload,focusId}){
     return base.filter(s=>[s.title,s.talk,s.speaker,s.theme,s.session,s.style]
       .filter(Boolean).join(" ").toLowerCase().includes(q));
   },[query,songs,favOnly,favTick]);
+  // Every group is {name, parts:[{name, items}]}: the Conference grouping
+  // nests April / October under each year (newest year first, months in
+  // calendar order, songs in speaking order); the others have one unnamed part.
   const groups=useMemo(()=>{
-    if(group==="flat")return[{name:null,items:filtered}];
+    if(group==="flat")return[{name:null,parts:[{name:null,items:filtered}]}];
+    if(group==="session"){
+      const years=new Map();
+      filtered.forEach(s=>{const c=confOf(s);const y=c.year||0,m=c.month||0;
+        if(!years.has(y))years.set(y,new Map());const ym=years.get(y);
+        if(!ym.has(m))ym.set(m,[]);ym.get(m).push({s,order:c.order});});
+      return[...years.entries()].sort((a,b)=>b[0]-a[0]).map(([y,ym])=>({
+        name:y?String(y):"Other",big:true,
+        parts:[...ym.entries()].sort((a,b)=>a[0]-b[0]).map(([m,arr])=>({
+          name:m?MONTH_NAMES[m]:(y?"Conference unknown":null),
+          items:arr.sort((a,b)=>(a.order-b.order)||String(a.s.title).localeCompare(String(b.s.title)))
+            .map(x=>x.s)}))}));
+    }
     const map=new Map();
     filtered.forEach(s=>{const k=s[group]||"Other";if(!map.has(k))map.set(k,[]);map.get(k).push(s);});
-    return[...map.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([name,items])=>({name,items}));
+    return[...map.entries()].sort((a,b)=>a[0].localeCompare(b[0]))
+      .map(([name,items])=>({name,parts:[{name:null,items}]}));
   },[group,filtered]);
 
   return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"0 20px 60px"}},
@@ -1356,20 +1392,28 @@ function Library({songs,loading,error,onReload,focusId}){
       songs.length===0?"No songs yet — the band will add the first one soon."
         :favOnly?"None of your starred songs match — tap ★ Favorites again to see the whole library."
         :"No songs match your search."),
-    groups.map((g,gi)=>e("section",{key:g.name||gi,style:{marginTop:gi?34:18}},
-      g.name&&e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
-        color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,marginBottom:14}},
-        g.name,e("span",{style:{color:"#7E97BD",marginLeft:8,fontSize:13}},g.items.length)),
-      e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
-        g.items.map(s=>e(SongCard,{key:s.id,song:s,open:openId===s.id,
-          canEdit,onEdited:onReload,
-          onToggle:()=>setOpenId(openId===s.id?null:s.id)}))))),
+    groups.map((g,gi)=>e("section",{key:g.name||gi,style:{marginTop:gi?(g.big?42:34):18}},
+      g.name&&e("h2",{style:g.big
+        ?{fontSize:26,fontWeight:"bold",letterSpacing:"0.04em",color:C.gold,
+          borderBottom:`2px solid ${C.gold}`,paddingBottom:6,marginBottom:16}
+        :{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
+          color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,marginBottom:14}},
+        g.name,e("span",{style:{color:"#7E97BD",marginLeft:8,fontSize:13,fontWeight:"normal",
+          letterSpacing:0}},g.parts.reduce((n,p)=>n+p.items.length,0))),
+      g.parts.map((p,pi)=>e("div",{key:p.name||pi,style:{marginTop:pi?26:0}},
+        p.name&&e("h3",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
+          color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"0 0 14px"}},
+          "♪ "+p.name,e("span",{style:{color:"#7E97BD",marginLeft:8,fontSize:13}},p.items.length)),
+        e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+          p.items.map(s=>e(SongCard,{key:s.id,song:s,open:openId===s.id,
+            canEdit,onEdited:onReload,
+            onToggle:()=>setOpenId(openId===s.id?null:s.id)}))))))),
   );
 }
 
 /* ---------------------------------------------------- Suggest form */
 const field={padding:"10px 12px",fontSize:15,borderRadius:8,
-  border:`1.5px solid ${C.line}`,background:"#1E3358",color:C.text,width:"100%"};
+  border:`1.5px solid ${C.line}`,background:"#182C4D",color:C.text,width:"100%"};
 const lbl={fontSize:13,color:C.src,marginBottom:5,display:"block",letterSpacing:"0.03em"};
 
 /* ------------------------------------- Tap-to-sync lyric timing (band) */
@@ -1700,7 +1744,7 @@ function Suggest(){
               flexWrap:"wrap",marginTop:8}},
               [s.lyricStyle,s.genre,s.mood].filter(Boolean).map((x,xi)=>
                 e("span",{key:xi,style:{fontSize:11,padding:"2px 9px",borderRadius:10,
-                  background:"#22375E",color:C.src}},x))),
+                  background:"#1F3457",color:C.src}},x))),
             s.note&&e("div",{style:{fontSize:13,color:C.src,marginTop:6,fontStyle:"italic",
               lineHeight:1.5}},"“"+s.note+"”"),
             e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:12,alignItems:"center"}},
@@ -1869,7 +1913,7 @@ function SuggestionsInbox(){
           flexWrap:"wrap",marginTop:8}},
           [s.lyricStyle,s.genre,s.mood].filter(Boolean).map((x,xi)=>
             e("span",{key:xi,style:{fontSize:11,padding:"2px 9px",borderRadius:10,
-              background:"#22375E",color:C.src}},x))),
+              background:"#1F3457",color:C.src}},x))),
         s.note&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:8,lineHeight:1.5,
           fontStyle:"italic"}},"“"+s.note+"”"),
         s.from&&e("div",{style:{fontSize:13,color:C.src,marginTop:6}},"— "+s.from),
@@ -2017,10 +2061,10 @@ function AccessGate({onUnlocked}){
   return e("div",null,
     e("header",{style:{background:C.brown,color:C.cream,borderBottom:`4px solid ${C.gold}`}},
       e("div",{style:{padding:"30px 20px 22px",textAlign:"center"}},
-        e("img",{src:"logo.png",alt:"Conference as a Concert",
-          style:{maxWidth:"min(360px,80vw)",width:"100%",height:"auto",
-            filter:"drop-shadow(0 4px 14px rgba(0,0,0,.4))"}}),
-        e("div",{style:{fontSize:15,fontStyle:"italic",color:"#E8D9B8",marginTop:6}},
+        e("img",{src:"banner.webp",alt:"Conference as a Concert",
+            style:{maxWidth:"min(820px,100%)",width:"100%",height:"auto",display:"block",
+              margin:"0 auto",borderRadius:14,boxShadow:"0 10px 30px rgba(0,0,0,.45)"}}),
+        e("div",{style:{fontSize:15,fontStyle:"italic",color:"#E8D4A8",marginTop:6}},
           "The Song Library"))),
     e("main",{style:{maxWidth:620,margin:"0 auto",padding:"26px 20px 60px"}},
       e("h1",{style:{fontSize:24,color:C.gold,margin:"6px 0 10px",textAlign:"center"}},
@@ -2190,8 +2234,8 @@ function AccessInbox(){
           r.status==="pending"&&badge("#4A3A1E","#E0C07A","Pending"),
           r.status==="approved"&&badge("#1E4D2B","#7FD89A","Approved"),
           r.status==="denied"&&badge("#4A2222","#E08A8A","Denied"),
-          r.invited&&badge("#22375E",C.src,"Invited"),
-          (r.requestCount||0)>1&&badge("#22375E",C.src,"Asked "+r.requestCount+"×"),
+          r.invited&&badge("#1F3457",C.src,"Invited"),
+          (r.requestCount||0)>1&&badge("#1F3457",C.src,"Asked "+r.requestCount+"×"),
           (r.redeemCount||0)>0&&badge("#1E4D2B","#7FD89A","Code used ✓")),
         r.email&&e("div",{style:{fontSize:14,color:C.text,marginTop:8,wordBreak:"break-all"}},
           r.email),
@@ -2249,7 +2293,7 @@ function AboutAI(){
         cursor:"pointer",textDecoration:"underline",fontStyle:"italic",padding:4}},
       "🎼 Made by humans, with AI as an instrument "+(open?"▾":"▸")),
     open&&e("div",{style:{maxWidth:560,margin:"10px auto 0",textAlign:"left",
-      background:"#1E3358",border:`1.5px solid ${C.line}`,borderRadius:12,
+      background:"#182C4D",border:`1.5px solid ${C.line}`,borderRadius:12,
       padding:"14px 18px",fontSize:13.5,color:C.text,lineHeight:1.65}},
       e("p",{style:{margin:"0 0 8px"}},
         "We want to be open about how this was made: we used AI tools to help ",
@@ -2506,7 +2550,7 @@ function WitnessThread({t,bandMode,onChange}){
       pending.map(w=>witnessBlock(w,true))),
     e("div",{style:{marginTop:12}},
       addOpen
-        ? e("div",{style:{background:"#1E3358",border:`1.5px solid ${C.line}`,
+        ? e("div",{style:{background:"#182C4D",border:`1.5px solid ${C.line}`,
             borderRadius:10,padding:"14px 14px 16px"}},
             e("div",{style:{fontSize:12.5,color:C.src,marginBottom:10,lineHeight:1.55}},
               "Add your witness — “by the mouth of two or three witnesses shall every word be established.”"),
@@ -2562,7 +2606,7 @@ function Testimonies({songs}){
       e("span",{style:{color:C.gold,fontWeight:"bold",fontSize:14}},
         "— "+(t.name||"A friend")),
       t.songTitle&&e("span",{style:{fontSize:11,padding:"2px 10px",borderRadius:10,
-        background:"#22375E",color:C.src}},"♪ "+t.songTitle),
+        background:"#1F3457",color:C.src}},"♪ "+t.songTitle),
       e("span",{style:{fontSize:12,color:C.src,marginLeft:"auto"}},fmtDate(t.createdAt))),
     !pending&&e(AmenRow,{t,key:"amen-"+t.id}),
     bandMode&&e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:12,
@@ -2632,7 +2676,7 @@ function TestimonySection({songs}){
     e("button",{onClick:()=>setOpen(v=>!v),
       style:{display:"flex",alignItems:"center",gap:8,width:"100%",
         padding:"10px 12px",borderRadius:8,cursor:"pointer",
-        border:`1.5px solid ${C.line}`,background:"#1E3358",color:C.gold,
+        border:`1.5px solid ${C.line}`,background:"#182C4D",color:C.gold,
         fontWeight:"bold",fontSize:14,textAlign:"left"}},
       e("span",null,open?"▾":"▸"),
       e("span",null,"💬 Share what this meant to you"),
@@ -2858,7 +2902,7 @@ function Band({onAdded,onBandChange}){
       onDragLeave:()=>setDrag(false),
       onDrop:ev=>{ev.preventDefault();setDrag(false);pick(ev.dataTransfer.files[0]);},
       style:{marginTop:18,border:`2.5px dashed ${drag?C.gold:C.line}`,borderRadius:12,
-        background:drag?C.paper:"#1E3358",padding:"30px 20px",textAlign:"center",
+        background:drag?C.paper:"#182C4D",padding:"30px 20px",textAlign:"center",
         transition:"all .15s"}},
       e("div",{style:{fontSize:30,color:C.gold,marginBottom:6}},"♪"),
       e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:4}},
@@ -2919,7 +2963,7 @@ function Band({onAdded,onBandChange}){
             color:C.src,marginBottom:8}},"Preview — from your Google Doc"),
           e("pre",{style:{whiteSpace:"pre-wrap",fontFamily:"Georgia,serif",fontSize:14,
             lineHeight:1.55,color:C.text,maxHeight:260,overflow:"auto",margin:0,
-            background:"#1E3358",border:`1px solid ${C.line}`,borderRadius:8,padding:"12px 14px"}},
+            background:"#182C4D",border:`1px solid ${C.line}`,borderRadius:8,padding:"12px 14px"}},
             gdocPreview),
           e("div",{style:{fontSize:12,color:C.src,margin:"8px 0 10px"}},
             gdocPreview.length+" characters · plain text only (formatting from the Doc isn't carried over)"),
@@ -3159,13 +3203,13 @@ function ConcertBuilder({songs,loading}){
     available.length===0
       ? e("p",{style:{color:C.src,fontStyle:"italic"}},
           songs.length===0?"No songs in the library yet.":"Nothing left to add.")
-      : available.map(s=>e(SongRow,{key:s.id,song:s,bg:"#1E3358",
+      : available.map(s=>e(SongRow,{key:s.id,song:s,bg:"#182C4D",
           sub:(s.talk?"from “"+s.talk+"” · ":"")+fmtTime(songSeconds(s,measured))
             +(measured[s.id]||s.duration>0?"":" (est.)"),
           actions:[e(PreviewButton,{key:"prev",song:s,small:true}),
             e("button",{key:"add",onClick:()=>add(s.id,section),disabled:atCap,
               style:{padding:"6px 14px",fontSize:13,borderRadius:16,border:0,
-                background:atCap?"#2C467A":C.gold,color:"#0A1628",fontWeight:"bold",
+                background:atCap?"#2E4470":C.gold,color:"#0A1628",fontWeight:"bold",
                 whiteSpace:"nowrap",cursor:atCap?"default":"pointer"}},"+ Add")]})));
 
   const timeColor=overCap?"#E66A5C":(atCap?C.src:C.gold);
@@ -3181,7 +3225,7 @@ function ConcertBuilder({songs,loading}){
         e("div",{style:{fontSize:22,fontWeight:"bold",color:timeColor,minWidth:90}},
           fmtTime(totalSecs)),
         e("div",{style:{flex:1,minWidth:160}},
-          e("div",{style:{height:8,background:"#22375E",borderRadius:5,overflow:"hidden"}},
+          e("div",{style:{height:8,background:"#1F3457",borderRadius:5,overflow:"hidden"}},
             e("div",{style:{height:"100%",width:Math.min(100,totalSecs/targetSecs*100)+"%",
               background:overCap?"#E66A5C":C.gold,transition:"width .2s"}})),
           e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
@@ -3213,7 +3257,7 @@ function ConcertBuilder({songs,loading}){
         e("input",{value:name,onChange:ev=>setName(ev.target.value),
           placeholder:"Name your concert…",style:{...field,margin:"14px 0"}}),
 
-        !useArc&&picked.length===0&&e("div",{style:{background:"#1E3358",
+        !useArc&&picked.length===0&&e("div",{style:{background:"#182C4D",
           border:`1.5px dashed ${C.gold}`,borderRadius:12,padding:"18px",marginBottom:14}},
           e("div",{style:{fontWeight:"bold",color:C.gold,marginBottom:4}},
             "Not sure where to start?"),
@@ -3240,7 +3284,7 @@ function ConcertBuilder({songs,loading}){
                   ?{txt:"✓ just right",col:"#5FB87A"}
                   :(n>hi?{txt:"more than suggested",col:"#E0A03A"}:null));
                 return e("div",{key:sec.key,style:{border:`1.5px solid ${C.line}`,
-                  borderRadius:12,padding:"14px",background:"#1E3358"}},
+                  borderRadius:12,padding:"14px",background:"#182C4D"}},
                   e("div",{style:{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}},
                     e("div",{style:{fontSize:13,letterSpacing:"0.1em",textTransform:"uppercase",
                       color:C.gold,fontWeight:"bold"}},sec.label),
@@ -3265,7 +3309,7 @@ function ConcertBuilder({songs,loading}){
                     : e("button",{onClick:()=>{setAddingTo(sec.key);setQuery("");},
                         disabled:atCap,
                         style:{padding:"7px 14px",fontSize:13,borderRadius:16,
-                          border:`1.5px solid ${atCap?"#2C467A":C.gold}`,
+                          border:`1.5px solid ${atCap?"#2E4470":C.gold}`,
                           background:"transparent",color:atCap?"#7E97BD":C.src,
                           cursor:atCap?"default":"pointer"}},
                         "+ Add to "+sec.label));
@@ -3627,7 +3671,7 @@ function ConcertPlayer({id,focusSongId}){
             alignItems:"center",marginTop:18,flexWrap:"wrap"}},
             e("button",{onClick:prev,disabled:idx===0,
               style:{padding:"10px 18px",borderRadius:8,border:`1.5px solid ${C.line}`,
-                background:"#1E3358",color:idx===0?"#5A78A8":C.text}},"⏮ Prev"),
+                background:"#182C4D",color:idx===0?"#5A78A8":C.text}},"⏮ Prev"),
             e("button",{onClick:next,disabled:idx>=songs.length-1,
               style:{padding:"10px 22px",borderRadius:8,border:0,
                 background:idx>=songs.length-1?"#3A5582":C.blue,color:"#0A1628"}},
@@ -3654,7 +3698,7 @@ function ConcertPlayer({id,focusSongId}){
             e("button",{onClick:()=>setShowPlan(v=>!v),
               style:{display:"flex",alignItems:"center",gap:8,width:"100%",
                 padding:"10px 12px",borderRadius:8,cursor:"pointer",
-                border:`1.5px solid ${C.line}`,background:"#1E3358",color:C.gold,
+                border:`1.5px solid ${C.line}`,background:"#182C4D",color:C.gold,
                 fontWeight:"bold",fontSize:14,textAlign:"left"}},
               e("span",null,showPlan?"▾":"▸"),
               e("span",null,"📖 Study Plan"),
@@ -3755,7 +3799,7 @@ function InstallHelper(){
             e("div",{style:{fontWeight:"bold",color:C.text,fontSize:15}},title),
             e("div",{style:{fontSize:13,color:C.src,lineHeight:1.5,marginTop:2}},desc))))),
       isIOS&&e("div",{style:{marginTop:16,padding:"10px 12px",borderRadius:8,
-        background:"#1E3358",fontSize:12.5,color:C.src,lineHeight:1.5}},
+        background:"#182C4D",fontSize:12.5,color:C.src,lineHeight:1.5}},
         "On iPhone this only works in Safari — Apple doesn't allow other browsers to add to the home screen."),
       e("button",{onClick:()=>setShow(false),
         style:{marginTop:18,padding:"10px 20px",fontSize:14,borderRadius:8,border:0,
@@ -4227,13 +4271,13 @@ function printConcertBingo(pool,mode,count){
       '<div class="ft">Mark a square when you hear its '+(mode==="talk"?"talk's song":"song")+" — five in a row (FREE counts) and shout ENCORE!</div></div>";
   }
   const html="<!DOCTYPE html><html><head><title>Concert Bingo</title><style>"+
-    "@page{size:letter portrait;margin:.5in}body{margin:0;font-family:Georgia,serif;color:#13294B}"+
+    "@page{size:letter portrait;margin:.5in}body{margin:0;font-family:Georgia,serif;color:#0F1F3D}"+
     ".card{page-break-after:always;display:flex;flex-direction:column;height:10in}"+
     ".hd{text-align:center;font-size:17px;font-weight:700;margin-bottom:.12in}"+
     ".hd span{font-weight:400;font-style:italic;font-size:12px;color:#8a6030;margin-left:10px}"+
     "table{border-collapse:collapse;width:100%;table-layout:fixed;flex:1}"+
-    "tr.mh th{border:2.5px solid #13294B;background:#13294B;color:#F2C14E;font-size:40px;font-weight:700;height:.72in;font-family:Georgia,serif}"+
-    "td{border:2.5px solid #13294B;text-align:center;vertical-align:middle;padding:4px;height:1.55in;font-size:12.5px;font-weight:700;overflow:hidden;line-height:1.3}"+
+    "tr.mh th{border:2.5px solid #0F1F3D;background:#0F1F3D;color:#E6BC5C;font-size:40px;font-weight:700;height:.72in;font-family:Georgia,serif}"+
+    "td{border:2.5px solid #0F1F3D;text-align:center;vertical-align:middle;padding:4px;height:1.55in;font-size:12.5px;font-weight:700;overflow:hidden;line-height:1.3}"+
     "td.free{background:#F7E9C4;font-size:14px;color:#8a6030}"+
     "td.free div{font-size:24px}"+
     ".ft{text-align:center;font-size:10.5px;color:#8a7050;margin-top:.13in}"+
@@ -4358,7 +4402,7 @@ function ConcertBingo({songs,onBack}){
    clip you heard. A match scores and keeps the turn; a miss flips back
    and passes play. Matched audio tiles can be tapped again to replay. */
 function ConcertMemory({songs,onBack}){
-  const TEAM_COLORS=["#E0524D","#4F9BE8","#3FA66A","#B58BE0"];
+  const TEAM_COLORS=["#E0524D","#7FAEE8","#3FA66A","#B58BE0"];
   const pool=useMemo(()=>songs.filter(s=>s.audioUrl),[songs]);
   const [pairs,setPairs]=useState(6);
   const [teamCount,setTeamCount]=useState(2);
@@ -4483,7 +4527,7 @@ function ConcertMemory({songs,onBack}){
               border:`2px solid ${st.matched?game.teams[st.by].color:showing?C.gold:C.line}`,
               boxShadow:st.matched?`0 0 0 2px ${game.teams[st.by].color}`:"none",
               background:showing?"#F5EEDC":C.paper,
-              color:showing?"#13294B":C.src,
+              color:showing?"#0F1F3D":C.src,
               opacity:st.matched?.82:1,
               display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}},
             !showing?e("span",{style:{fontSize:26}},"🎼")
@@ -4509,7 +4553,7 @@ function ConcertMemory({songs,onBack}){
             const w=game.teams.filter(t=>t.score===top);
             return w.length>1?"Tie — "+w.map(t=>t.name).join(" & ")+"!":w[0].name+" wins!";
           })()),
-        game.teams.length>1&&e("div",{style:{fontSize:16,color:"#EAF0FA"}},
+        game.teams.length>1&&e("div",{style:{fontSize:16,color:"#F0E9DA"}},
           game.teams.map(t=>t.name+": "+t.score).join("   ·   ")),
         e("div",{style:{display:"flex",gap:10}},
           e("button",{style:gameBtn,onClick:()=>{stopClip();start();}},"↻ Play again"),
@@ -4708,7 +4752,7 @@ function buildTimelineDeck(pool,count){
 }
 
 function ConcertTimeline({songs,onBack}){
-  const PCOLORS=["#E0524D","#4F9BE8","#3FA66A","#B58BE0","#E8A33D","#5AC8C8"];
+  const PCOLORS=["#E0524D","#7FAEE8","#3FA66A","#B58BE0","#E8A33D","#5AC8C8"];
   const pool=useMemo(()=>songs
     .filter(s=>s.audioUrl&&gcOrderKey(s.talkUrl))
     .map(s=>({song:s,key:gcOrderKey(s.talkUrl)})),[songs]);
@@ -4858,7 +4902,7 @@ function ConcertTimeline({songs,onBack}){
               const it=g.timeline[i];
               rows.push(e("div",{key:"song"+i,style:{background:"#F5EEDC",borderRadius:10,
                 padding:"9px 12px",margin:"3px 0",textAlign:"left"}},
-                e("div",{style:{fontSize:14.5,fontWeight:"bold",color:"#13294B"}},it.song.title),
+                e("div",{style:{fontSize:14.5,fontWeight:"bold",color:"#0F1F3D"}},it.song.title),
                 e("div",{style:{fontSize:11.5,color:"#8a6030",marginTop:2}},
                   it.key.label+(it.song.speaker?"  ·  "+it.song.speaker:""))));
             }
