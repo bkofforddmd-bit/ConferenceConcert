@@ -1332,8 +1332,8 @@ function Library({songs,loading,error,onReload,focusId}){
       .filter(Boolean).join(" ").toLowerCase().includes(q));
   },[query,songs,favOnly,favTick]);
   // Every group is {name, parts:[{name, items}]}: the Conference grouping
-  // nests April / October under each year (newest year first, months in
-  // calendar order, songs in speaking order); the others have one unnamed part.
+  // nests October / April under each year (newest year first, newest
+  // conference first, songs in speaking order); the others have one unnamed part.
   const groups=useMemo(()=>{
     if(group==="flat")return[{name:null,parts:[{name:null,items:filtered}]}];
     if(group==="session"){
@@ -1343,7 +1343,7 @@ function Library({songs,loading,error,onReload,focusId}){
         if(!ym.has(m))ym.set(m,[]);ym.get(m).push({s,order:c.order});});
       return[...years.entries()].sort((a,b)=>b[0]-a[0]).map(([y,ym])=>({
         name:y?String(y):"Other",big:true,
-        parts:[...ym.entries()].sort((a,b)=>a[0]-b[0]).map(([m,arr])=>({
+        parts:[...ym.entries()].sort((a,b)=>b[0]-a[0]).map(([m,arr])=>({
           name:m?MONTH_NAMES[m]:(y?"Conference unknown":null),
           items:arr.sort((a,b)=>(a.order-b.order)||String(a.s.title).localeCompare(String(b.s.title)))
             .map(x=>x.s)}))}));
