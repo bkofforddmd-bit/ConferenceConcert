@@ -124,25 +124,50 @@ function composePost(song, draft) {
 function fbEnv() {
   return { pageId: process.env.FB_PAGE_ID || "", token: process.env.FB_PAGE_TOKEN || "" };
 }
-async function fbCheck() {
+// Work out which Page to post as, from whatever token was configured.
+// A Page token is what we want. If the band pasted their personal (user)
+// token instead, which is easy to do in the Graph Explorer, we look up the
+// Pages that person manages and use that Page own token, so posting still
+// works. The panel then shows the Page token so it can be made permanent.
+async function resolvePage() {
   const { pageId, token } = fbEnv();
-  if (!pageId || !token) return { ok: false, error: "FB_PAGE_ID / FB_PAGE_TOKEN are not set in Netlify" };
+  if (!token) return { ok: false, error: "FB_PAGE_TOKEN is not set in Netlify" };
+  const get = async (path) => {
+    const r = await fetch(`${GRAPH}/${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(token)}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error ? d.error.message : "Facebook returned HTTP " + r.status);
+    return d;
+  };
   try {
-    const r = await fetch(`${GRAPH}/${pageId}?fields=name,link&access_token=${encodeURIComponent(token)}`);
-    const d = await r.json();
-    if (!r.ok || d.error) return { ok: false, error: d.error ? d.error.message : "Facebook returned HTTP " + r.status };
-    return { ok: true, name: d.name, link: d.link };
+    let pages = [];
+    try { pages = (await get("me/accounts?fields=id,name,link,access_token&limit=100")).data || []; } catch (_) { pages = []; }
+    if (pages.length) {
+      const pick = pages.find((p) => p.id === pageId) || pages.find((p) => /concert/i.test(p.name)) || (pages.length === 1 ? pages[0] : null);
+      if (!pick) return { ok: false, error: "This personal token manages " + pages.length + " Pages. Set FB_PAGE_ID to the right one: " + pages.map((p) => p.name + " (" + p.id + ")").join(", ") };
+      return { ok: true, pageId: pick.id, token: pick.access_token, name: pick.name, link: pick.link, viaUser: true };
+    }
+    // A Page token answers /me with the Page itself (Pages have a category; people do not).
+    let me;
+    try { me = await get("me?fields=id,name,link,category"); }
+    catch (_) { return { ok: false, error: "This is a personal token and the account manages no Facebook Page. Create the Page, then generate a Page token." }; }
+    return { ok: true, pageId: me.id, token, name: me.name, link: me.link, viaUser: false };
   } catch (err) { return { ok: false, error: err.message }; }
 }
+async function fbCheck() {
+  const pg = await resolvePage();
+  if (!pg.ok) return pg;
+  return { ok: true, name: pg.name, link: pg.link, pageId: pg.pageId, viaUser: pg.viaUser,
+    pageToken: pg.viaUser ? pg.token : undefined };
+}
 async function fbPostVideo(song, description) {
-  const { pageId, token } = fbEnv();
-  if (!pageId || !token) throw new Error("Facebook is not connected (FB_PAGE_ID / FB_PAGE_TOKEN)");
-  const body = new URLSearchParams({ access_token: token, file_url: song.videoUrl, description,
+  const pg = await resolvePage();
+  if (!pg.ok) throw new Error("Facebook is not connected: " + pg.error);
+  const body = new URLSearchParams({ access_token: pg.token, file_url: song.videoUrl, description,
     title: clip(song.title, 100) });
-  const r = await fetch(`${GRAPH}/${pageId}/videos`, { method: "POST", body });
+  const r = await fetch(`${GRAPH}/${pg.pageId}/videos`, { method: "POST", body });
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.error) throw new Error("Facebook: " + (d.error ? d.error.message : "HTTP " + r.status));
-  return { id: d.id, url: `https://www.facebook.com/${pageId}/videos/${d.id}/` };
+  return { id: d.id, url: `https://www.facebook.com/${pg.pageId}/videos/${d.id}/` };
 }
 
 // ---------- one run ----------
@@ -189,4 +214,4 @@ async function runOnce(opts = {}) {
 }
 
 module.exports = { STATE_KEY, APP_URL, localDate, loadState, saveState, loadSongs, confOf, buildQueue,
-  talkText, draftPost, composePost, fbCheck, fbPostVideo, runOnce };
+  talkText, draftPost, composePost, resolvePage, fbCheck, fbPostVideo, runOnce };

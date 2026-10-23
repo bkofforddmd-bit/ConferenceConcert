@@ -5127,6 +5127,11 @@ function DailyPostsTab(){
               :e("span",null,"Facebook: ",e("span",{style:{color:C.src}},st.facebook?st.facebook.error:"not connected"))),
           e("div",{style:{marginTop:6,fontSize:14,color:C.text}},dot(st.claude),
             st.claude?"Writer (Claude): ready":e("span",null,"Writer (Claude): ",e("span",{style:{color:C.src}},"ANTHROPIC_API_KEY not set"))),
+          st.facebook&&st.facebook.ok&&st.facebook.viaUser&&e("div",{style:{marginTop:10,fontSize:12.5,color:"#E0C07A",lineHeight:1.55}},
+            "Connected through your personal token, which Facebook expires after about 60 days. ",
+            "To make it permanent, put these two values in Netlify (Site configuration → Environment variables), then Trigger deploy:",
+            e("div",{style:{marginTop:6,color:C.text}},"FB_PAGE_ID = ",e("code",{style:{fontSize:12}},st.facebook.pageId),e(CopyChip,{text:st.facebook.pageId})),
+            e("div",{style:{marginTop:4,color:C.text}},"FB_PAGE_TOKEN = ",e("code",{style:{fontSize:12}},"(the Page token)"),e(CopyChip,{text:st.facebook.pageToken}))),
           (!(st.facebook&&st.facebook.ok)||!st.claude)&&e("div",{style:{fontSize:12.5,color:C.src,marginTop:8}},
             "Setup steps are in SETUP-FACEBOOK.md in the site's files."))),
 
