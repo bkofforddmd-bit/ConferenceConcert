@@ -3,6 +3,7 @@
 // Two actions (no large file ever passes through this function):
 //   { action: "sign", filename, contentType }  -> { uploadUrl, publicUrl }
 //   { action: "save", song:{...} }             -> appends the song to catalog.json
+//   { action: "links", id, youtube?, facebook? } -> records where a video was posted
 // Back-compat: a body with { song } and no action is treated as "save".
 const { getJSON, putJSON, presignPut, CATALOG_KEY, json } = require("./_r2");
 
@@ -91,6 +92,29 @@ exports.handler = async (event) => {
       return json(200, { ok: true, entry });
     } catch (err) {
       return json(500, { error: "Could not update catalog", detail: String(err.message || err) });
+    }
+  }
+
+  // ---- 2b) Record where a video was posted (Publish kit) ----
+  // Only touches the two link fields, so nothing else on the song can be
+  // blanked by accident. { action:"links", id, youtube?, facebook? }
+  if (action === "links") {
+    const id = clip(body.id, 120);
+    if (!id) return json(400, { error: "Missing song id" });
+    try {
+      const catalog = await getJSON(CATALOG_KEY, { songs: [] });
+      const songs = catalog.songs || [];
+      const i = songs.findIndex((x) => x.id === id);
+      if (i < 0) return json(404, { error: "Song not found" });
+      const next = { ...songs[i], updatedAt: new Date().toISOString() };
+      if (body.youtube !== undefined) next.youtube = clip(body.youtube, 200);
+      if (body.facebook !== undefined) next.facebook = clip(body.facebook, 300);
+      songs[i] = next;
+      catalog.songs = songs;
+      await putJSON(CATALOG_KEY, catalog);
+      return json(200, { ok: true, entry: next });
+    } catch (err) {
+      return json(500, { error: "Could not save links", detail: String(err.message || err) });
     }
   }
 

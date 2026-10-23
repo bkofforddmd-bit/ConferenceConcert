@@ -1211,6 +1211,178 @@ function ShareButton({title,text,url,label,small}){
 }
 
 /* --------------------------------------------------------- Song card */
+/* ------------------------------------------------ Publish kit (band) */
+/* Everything needed to post a song's lyric video to YouTube and Facebook in
+   about a minute: ready-made title / description / post text with Copy
+   buttons, the MP4 download, buttons that open each site's composer, and two
+   paste-back boxes so the app remembers where it was posted (the YouTube
+   link also flips the player to the embed, which saves storage bandwidth). */
+const needsPost=s=>!!(s.videoUrl&&(!ytId(s.youtube)||!s.facebook));
+function publishTexts(song){
+  const appUrl=location.origin+location.pathname;
+  const songUrl=appUrl+"?song="+encodeURIComponent(song.id);
+  const who=(song.speaker&&song.speaker!=="—")?song.speaker:"";
+  const conf=song.session||"";
+  const base=song.title+(who?" · "+who:"")+(conf?" · "+conf+" General Conference":"");
+  const full=base+" | Conference as a Concert";
+  const title=full.length<=100?full:(base.length<=100?base:base.slice(0,97)+"…");
+  const lastName=(who.split(/\s+/).pop()||"").replace(/[^A-Za-z]/g,"");
+  const tags=["#GeneralConference","#ConferenceAsAConcert","#ChurchOfJesusChrist","#LatterDaySaints","#LDSMusic"]
+    .concat(lastName?["#"+lastName]:[]).join(" ");
+  const about=(song.blurb?song.blurb+"\n\n":"")+
+    "A song from the General Conference talk “"+(song.talk||song.title)+"”"+(who?" by "+who:"")+(conf?" ("+conf+")":"")+".\n"+
+    (song.talkUrl?"\nRead the talk: "+song.talkUrl:"")+
+    "\nListen & sing along in the app: "+songUrl+
+    "\nBuild your own concert: "+appUrl+
+    "\n\nConference as a Concert — General Conference talks, set to music. Made by humans, with AI as an instrument.";
+  const description=about+"\n\n"+tags;
+  const lyrics=(song.lyrics||"").trim();
+  const descriptionLyrics=lyrics?about+"\n\nLYRICS\n\n"+lyrics+"\n\n"+tags:description;
+  const facebook="🎶 “"+song.title+"” — "+(who?who+"’s ":"")+(conf?conf+" ":"")+"General Conference talk"+
+    (song.talk?" “"+song.talk+"”":"")+", set to music."+
+    (song.blurb?"\n\n"+song.blurb:"")+
+    "\n\n▶ Listen & sing along: "+songUrl+
+    (song.talkUrl?"\n📖 Read the talk: "+song.talkUrl:"")+
+    "\n\n#GeneralConference #ConferenceAsAConcert";
+  return {title,description,descriptionLyrics,facebook,tags,songUrl};
+}
+function CopyBox({label,text,rows}){
+  const [done,setDone]=useState("");
+  async function copy(){
+    try{await navigator.clipboard.writeText(text);setDone("Copied!");}
+    catch(_){setDone("Select the text and copy it");}
+    setTimeout(()=>setDone(""),2000);
+  }
+  return e("div",{style:{marginTop:12}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:5}},
+      e("span",{style:{fontSize:12.5,color:C.src,letterSpacing:"0.03em"}},label),
+      e("button",{onClick:copy,style:{padding:"3px 12px",fontSize:12,borderRadius:14,
+        border:`1.5px solid ${C.gold}`,background:C.gold,color:"#0A1628",fontWeight:"bold",cursor:"pointer"}},"Copy"),
+      done&&e("span",{style:{fontSize:12,color:C.src}},done)),
+    e("textarea",{readOnly:true,value:text,rows:rows||3,onFocus:ev=>ev.target.select(),
+      style:{width:"100%",padding:"9px 11px",fontSize:13,lineHeight:1.45,borderRadius:8,
+        border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,resize:"vertical",
+        fontFamily:"Georgia,serif"}}));
+}
+function PublishKit({song,onEdited}){
+  const [open,setOpen]=useState(false);
+  const [withLyrics,setWithLyrics]=useState(false);
+  const [facts,setFacts]=useState(null); // {dur,w,h,mb}
+  const [dl,setDl]=useState("");       // "" | "working" | "done" | "fallback"
+  const [yt,setYt]=useState(song.youtube||"");
+  const [fb,setFb]=useState(song.facebook||"");
+  const [save,setSave]=useState("idle");
+  const [msg,setMsg]=useState("");
+  const texts=useMemo(()=>publishTexts(song),[song]);
+  const pw=sessionStorage.getItem("cac_pw")||"";
+  const ytOk=!!ytId(song.youtube),fbOk=!!song.facebook;
+
+  // Duration / orientation / size, read from the file itself when the card opens.
+  useEffect(()=>{
+    if(!open||facts||!song.videoUrl)return;
+    const v=document.createElement("video");v.preload="metadata";v.muted=true;
+    v.onloadedmetadata=()=>{setFacts(f=>({...(f||{}),dur:v.duration,w:v.videoWidth,h:v.videoHeight}));};
+    v.onerror=()=>setFacts(f=>({...(f||{}),failed:true}));
+    v.src=song.videoUrl;
+    const giveUp=setTimeout(()=>setFacts(f=>(f&&f.dur)?f:({...(f||{}),failed:true})),10000);
+    fetch(song.videoUrl,{method:"HEAD"}).then(r=>{const n=+r.headers.get("content-length");
+      if(n)setFacts(f=>({...(f||{}),mb:n/1048576}));}).catch(()=>{});
+  },[open]);
+  const vertical=facts&&facts.w&&facts.h&&facts.h>facts.w;
+  const isShort=vertical&&facts.dur&&facts.dur<=180;
+
+  async function download(){
+    setDl("working");
+    try{
+      const r=await fetch(song.videoUrl);if(!r.ok)throw new Error("HTTP "+r.status);
+      const blob=await r.blob();const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");a.href=url;
+      a.download=(song.title||"song").replace(/[^A-Za-z0-9 _-]+/g,"").trim().replace(/\s+/g,"-")+".mp4";
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);setDl("done");
+    }catch(_){window.open(song.videoUrl,"_blank","noopener");setDl("fallback");}
+    setTimeout(()=>setDl(""),4000);
+  }
+  async function saveLinks(){
+    const y=yt.trim(),f=fb.trim();
+    if(y&&!ytId(y)){setSave("error");setMsg("That doesn't look like a YouTube video link.");return;}
+    if(f&&!/^https?:\/\//i.test(f)){setSave("error");setMsg("The Facebook link should start with https://");return;}
+    setSave("saving");setMsg("");
+    try{
+      const r=await fetch(`${API}/upload`,{method:"POST",
+        headers:{"Content-Type":"application/json","x-upload-password":pw},
+        body:JSON.stringify({action:"links",id:song.id,youtube:y,facebook:f})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||"Could not save");
+      setSave("saved");setMsg("Saved — the library will refresh.");onEdited&&onEdited();
+    }catch(err){setSave("error");setMsg(err.message);}
+  }
+  const fmtClip=sec=>Math.floor(sec/60)+":"+String(Math.floor(sec%60)).padStart(2,"0");
+  const btn={padding:"8px 14px",fontSize:13,borderRadius:8,border:`1.5px solid ${C.line}`,
+    background:"transparent",color:C.text,cursor:"pointer",textDecoration:"none",display:"inline-block"};
+  const field={width:"100%",padding:"9px 11px",fontSize:14,borderRadius:8,
+    border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text};
+  const step=(n,txt)=>e("div",{style:{display:"flex",gap:10,alignItems:"baseline",margin:"16px 0 6px"}},
+    e("span",{style:{width:22,height:22,borderRadius:"50%",background:C.gold,color:"#0A1628",fontSize:12,
+      fontWeight:"bold",display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}},n),
+    e("span",{style:{fontWeight:"bold",color:C.gold,fontSize:14.5}},txt));
+
+  return e("div",{style:{margin:"0 20px 16px"}},
+    e("button",{onClick:()=>setOpen(v=>!v),"aria-expanded":open,
+      style:{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 12px",borderRadius:8,
+        border:`1.5px solid ${(ytOk&&fbOk)?C.line:C.gold}`,background:"#182C4D",color:C.gold,
+        fontWeight:"bold",fontSize:14,textAlign:"left",cursor:"pointer"}},
+      e("span",null,open?"▾":"▸"),
+      e("span",null,"📣 Publish kit"),
+      e("span",{style:{marginLeft:"auto",fontWeight:"normal",fontSize:12.5,color:C.src}},
+        "YouTube "+(ytOk?"✓":"–")+" · Facebook "+(fbOk?"✓":"–"))),
+    open&&e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,
+        padding:"14px 18px 18px",marginTop:8}},
+      e("div",{style:{fontSize:13,color:C.src,lineHeight:1.55}},
+        facts&&facts.dur?e("span",null,"This video: "+fmtClip(facts.dur)+
+          (facts.w?" · "+facts.w+"×"+facts.h+(vertical?" (vertical)":" (landscape)"):"")+
+          (facts.mb?" · "+facts.mb.toFixed(0)+" MB":"")+". "):(facts&&facts.failed?"":"Reading the video's length and shape… "),
+        facts&&facts.dur?(isShort
+          ?"Vertical and under 3 minutes, so YouTube will file it as a Short automatically."
+          :"YouTube will treat it as a regular upload."):null),
+
+      step(1,"Get the file"),
+      e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}},
+        e("button",{onClick:download,disabled:dl==="working",style:{...btn,borderColor:C.gold,color:C.gold}},
+          dl==="working"?"Preparing download…":"⤓ Download MP4"),
+        dl==="done"&&e("span",{style:{fontSize:12.5,color:C.src}},"Saved to your downloads."),
+        dl==="fallback"&&e("span",{style:{fontSize:12.5,color:C.src}},"Opened in a new tab — use Save video there.")),
+
+      step(2,"YouTube"),
+      e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
+        e("a",{href:"https://www.youtube.com/upload",target:"_blank",rel:"noopener",style:btn},"Open YouTube upload ↗")),
+      e(CopyBox,{label:"Title ("+texts.title.length+"/100)",text:texts.title,rows:2}),
+      e("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:12.5,color:C.src,marginTop:10}},
+        e("input",{type:"checkbox",checked:withLyrics,onChange:ev=>setWithLyrics(ev.target.checked)}),
+        "Include the lyrics in the description"),
+      e(CopyBox,{label:"Description",text:withLyrics?texts.descriptionLyrics:texts.description,rows:withLyrics?10:7}),
+      e(CopyBox,{label:"Tags (paste in the Tags box)",text:texts.tags.replace(/#/g,"").split(" ").join(", "),rows:1}),
+
+      step(3,"Facebook"),
+      e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
+        e("a",{href:"https://www.facebook.com/",target:"_blank",rel:"noopener",style:btn},"Open Facebook ↗")),
+      e(CopyBox,{label:"Post text (add the video file to the post)",text:texts.facebook,rows:7}),
+
+      step(4,"Paste the links back"),
+      e("p",{style:{fontSize:12.5,color:C.src,margin:"0 0 10px",lineHeight:1.5}},
+        "Once posted, paste each link here. The YouTube link makes the app play the YouTube version; both links mark this song as posted."),
+      e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 240px"}},
+          e("label",{style:{display:"block",fontSize:12.5,color:C.src,marginBottom:4}},"YouTube link"),
+          e("input",{style:field,value:yt,onChange:ev=>setYt(ev.target.value),placeholder:"https://youtu.be/…"})),
+        e("div",{style:{flex:"1 1 240px"}},
+          e("label",{style:{display:"block",fontSize:12.5,color:C.src,marginBottom:4}},"Facebook post link"),
+          e("input",{style:field,value:fb,onChange:ev=>setFb(ev.target.value),placeholder:"https://www.facebook.com/…"}))),
+      e("div",{style:{display:"flex",gap:10,alignItems:"center",marginTop:10,flexWrap:"wrap"}},
+        e("button",{onClick:saveLinks,disabled:save==="saving",style:{...btn,background:C.gold,borderColor:C.gold,
+          color:"#0A1628",fontWeight:"bold"}},save==="saving"?"Saving…":"Save links"),
+        msg&&e("span",{style:{fontSize:12.5,color:save==="error"?"#E66A5C":C.src}},msg))));
+}
+
 function SongCard({song,open,onToggle,canEdit,onEdited}){
   const [editing,setEditing]=useState(false);
   const vid=ytId(song.youtube)||(song.videoUrl?"file":null);
@@ -1228,7 +1400,11 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
           e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
             e("span",{style:{fontSize:19,fontWeight:"bold",color:C.gold}},song.title),
             e("span",{style:{fontSize:11,color:"#fff",background:badgeColor,
-              padding:"2px 9px",borderRadius:12}},badge)),
+              padding:"2px 9px",borderRadius:12}},badge),
+            canEdit&&song.videoUrl&&e("span",{title:"Publish status",style:{fontSize:11,
+              color:needsPost(song)?C.gold:C.src,border:`1px solid ${needsPost(song)?C.gold:C.line}`,
+              padding:"1px 8px",borderRadius:12}},
+              "📣 YT "+(ytId(song.youtube)?"✓":"–")+" · FB "+(song.facebook?"✓":"–"))),
           song.talk&&e("div",{style:{fontSize:14,color:C.text,marginTop:5,fontStyle:"italic"}},
             "from “"+song.talk+"”"+(song.speaker&&song.speaker!=="—"?" · "+song.speaker:"")),
           song.blurb&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:6,lineHeight:1.5}},song.blurb)),
@@ -1237,6 +1413,7 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
       e(FavStar,{song,style:{margin:"12px 10px 0 4px"}})),
     open&&!editing&&e("div",null,
       e(Player,{song}),
+      canEdit&&song.videoUrl&&e(PublishKit,{song,onEdited}),
       canEdit&&e("div",{style:{padding:"0 20px 16px"}},
         e("button",{onClick:()=>setEditing(true),
           style:{padding:"7px 16px",fontSize:13,borderRadius:8,
@@ -1361,8 +1538,10 @@ function Library({songs,loading,error,onReload,focusId}){
   const [query,setQuery]=useState("");
   const [openId,setOpenId]=useState(null);
   const [favOnly,setFavOnly]=useState(false);
+  const [toPost,setToPost]=useState(false); // band: videos not yet posted everywhere
   const favTick=useFavs(); // re-filter when stars change
   const canEdit=!!sessionStorage.getItem("cac_pw");
+  const toPostCount=canEdit?songs.filter(needsPost).length:0;
   // Open a song that was deep-linked via ?song=ID, once songs have loaded.
   useEffect(()=>{
     if(focusId&&songs.some(s=>s.id===focusId)){
@@ -1372,12 +1551,13 @@ function Library({songs,loading,error,onReload,focusId}){
     }
   },[focusId,songs]);
   const filtered=useMemo(()=>{
-    const base=favOnly?songs.filter(s=>favStore.has(s.id)):songs;
+    let base=favOnly?songs.filter(s=>favStore.has(s.id)):songs;
+    if(toPost)base=base.filter(needsPost);
     const q=query.trim().toLowerCase();
     if(!q)return base;
     return base.filter(s=>[s.title,s.talk,s.speaker,s.theme,s.session,s.style]
       .filter(Boolean).join(" ").toLowerCase().includes(q));
-  },[query,songs,favOnly,favTick]);
+  },[query,songs,favOnly,favTick,toPost]);
   // Every group is {name, parts:[{name, items}]}: the Conference grouping
   // nests October / April under each year (newest year first, newest
   // conference first, songs in speaking order); the others have one unnamed part.
@@ -1424,6 +1604,14 @@ function Library({songs,loading,error,onReload,focusId}){
           background:favOnly?C.gold:C.paper,color:favOnly?"#0A1628":C.text,
           whiteSpace:"nowrap",cursor:"pointer"}},
         "★ Favorites"),
+      toPostCount>0&&e("button",{onClick:()=>setToPost(v=>!v),
+        "aria-pressed":toPost,
+        title:toPost?"Show the whole library":"Show only videos not yet posted to YouTube and Facebook",
+        style:{padding:"7px 14px",fontSize:14,borderRadius:20,
+          border:`1.5px solid ${toPost?C.gold:C.line}`,
+          background:toPost?C.gold:C.paper,color:toPost?"#0A1628":C.text,
+          whiteSpace:"nowrap",cursor:"pointer"}},
+        "📣 Videos to post ("+toPostCount+")"),
       e("input",{type:"search",value:query,onChange:ev=>setQuery(ev.target.value),
         placeholder:"Search title, talk, speaker…","aria-label":"Search songs",
         style:{flex:"1 1 220px",maxWidth:300,padding:"9px 14px",fontSize:15,
@@ -1438,6 +1626,7 @@ function Library({songs,loading,error,onReload,focusId}){
       fontStyle:"italic",padding:"40px 0"}},
       songs.length===0?"No songs yet — the band will add the first one soon."
         :favOnly?"None of your starred songs match — tap ★ Favorites again to see the whole library."
+        :toPost?"Every video has been posted to both places — nothing left to publish."
         :"No songs match your search."),
     groups.map((g,gi)=>e("section",{key:g.name||gi,style:{marginTop:gi?(g.big?42:34):18}},
       g.name&&e("h2",{style:g.big
