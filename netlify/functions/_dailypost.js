@@ -76,14 +76,13 @@ async function talkText(url) {
 
 const SYSTEM = `You write short Facebook posts for "Conference as a Concert": a few friends who take General Conference talks (The Church of Jesus Christ of Latter-day Saints) and set them to music, then share the songs free in a small app. Each post introduces one song.
 
-Voice: sincere, plain, a little unpolished, the way a thoughtful friend talks, not a marketer. First person plural ("we"). No hype, no sales words, no exclamation marks, at most one emoji and only if it feels natural. Short sentences. Ordinary words.
+Voice: a quiet note from one person to a friend. Sincere, plain, unpolished, a little vulnerable. Write as "I". Short sentences, ordinary words, nothing clever. No hype, no sales words, no exclamation marks, no emoji.
 
-Shape (90 to 160 words, 3 short paragraphs):
-1. One thing the speaker said that stayed with us, in our own words, with at most one short quoted phrase from the talk.
-2. Why it matters in ordinary life right now: a concrete, everyday reason, not a platitude.
-3. One quiet sentence inviting people to listen to the song (the link is added after your text, so do not write a URL).
+Length: 40 to 70 words, two short paragraphs.
+1. One thing the speaker said that I keep thinking about, and the small, honest reason it landed in my own life this week (one concrete detail, not a lesson).
+2. One line offering the song, gently, as something I made from that talk and wanted to share. The link is added after your text, so do not write a URL.
 
-Rules: name the speaker and the talk title once. Do not invent facts, stories or quotes that are not in the talk. No hashtags, no "link in bio", no headings, no bullet points. Output only the post text.`;
+Rules: name the speaker once, naturally (for example "Elder Gong said"); the talk title is optional. Quote at most four words from the talk, or none. Do not invent facts, stories or quotes that are not in the talk; the personal detail must stay general enough to be true of almost anyone, and it should come from the talk itself (what the speaker describes), not from a stock scene. Vary it from post to post. Do not end with the same sentence every time; the offer of the song should be worded freshly and simply. No hashtags, no headings, no bullet points, no sign-off. Output only the post text.`;
 
 async function draftPost(song, opts) {
   const Anthropic = require("@anthropic-ai/sdk");
