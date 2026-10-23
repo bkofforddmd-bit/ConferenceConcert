@@ -144,7 +144,10 @@ async function resolvePage() {
     if (pages.length) {
       const pick = pages.find((p) => p.id === pageId) || pages.find((p) => /concert/i.test(p.name)) || (pages.length === 1 ? pages[0] : null);
       if (!pick) return { ok: false, error: "This personal token manages " + pages.length + " Pages. Set FB_PAGE_ID to the right one: " + pages.map((p) => p.name + " (" + p.id + ")").join(", ") };
-      return { ok: true, pageId: pick.id, token: pick.access_token, name: pick.name, link: pick.link, viaUser: true };
+      // What did the person actually grant? A Page token inherits exactly these.
+      let granted = [];
+      try { granted = ((await get("me/permissions")).data || []).filter((x) => x.status === "granted").map((x) => x.permission); } catch (_) {}
+      return { ok: true, pageId: pick.id, token: pick.access_token, name: pick.name, link: pick.link, viaUser: true, granted };
     }
     // A Page token answers /me with the Page itself (Pages have a category; people do not).
     let me;
@@ -156,8 +159,12 @@ async function resolvePage() {
 async function fbCheck() {
   const pg = await resolvePage();
   if (!pg.ok) return pg;
+  const NEEDED = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"];
+  const granted = pg.granted || null;
   return { ok: true, name: pg.name, link: pg.link, pageId: pg.pageId, viaUser: pg.viaUser,
-    pageToken: pg.viaUser ? pg.token : undefined };
+    pageToken: pg.viaUser ? pg.token : undefined,
+    permissions: granted ? NEEDED.map((k) => ({ name: k, ok: granted.includes(k) })) : null,
+    missing: granted ? NEEDED.filter((k) => !granted.includes(k)) : [] };
 }
 async function fbPostVideo(song, description) {
   const pg = await resolvePage();
