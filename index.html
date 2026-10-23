@@ -1264,6 +1264,139 @@ function CopyBox({label,text,rows}){
         border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,resize:"vertical",
         fontFamily:"Georgia,serif"}}));
 }
+/* ------------------------------------------ Log-in reminders (band) */
+/* The band's YouTube / Facebook sign-in notes, kept next to the Publish kit.
+   They are encrypted IN THE BROWSER with a key derived from the band
+   password (PBKDF2 → AES-GCM) before they go to the vault function, so the
+   server and the bucket only ever see ciphertext. In band mode the password
+   is already in sessionStorage, so the notes unlock by themselves. If the
+   band password ever changes, open this card, re-enter the notes and save —
+   that re-encrypts them under the new password. */
+const b64=u8=>btoa(String.fromCharCode(...u8));
+const unb64=str=>Uint8Array.from(atob(str),c=>c.charCodeAt(0));
+async function vaultKey(pw,salt){
+  const base=await crypto.subtle.importKey("raw",new TextEncoder().encode(pw),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:200000,hash:"SHA-256"},base,
+    {name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+}
+async function vaultSeal(pw,obj){
+  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await vaultKey(pw,salt);
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(obj)));
+  return {v:1,salt:b64(salt),iv:b64(iv),ct:b64(new Uint8Array(ct))};
+}
+async function vaultOpen(pw,blob){
+  const key=await vaultKey(pw,unb64(blob.salt));
+  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(blob.iv)},key,unb64(blob.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+const VAULT_DEFAULT=()=>({entries:[
+  {site:"YouTube",url:"https://studio.youtube.com/",user:"",pass:"",notes:""},
+  {site:"Facebook",url:"https://www.facebook.com/",user:"",pass:"",notes:""}]});
+const vaultCache={blob:undefined,data:null}; // shared by every open kit on the page
+function CopyChip({text}){
+  const [ok,setOk]=useState(false);
+  if(!text)return null;
+  return e("button",{onClick:async()=>{try{await navigator.clipboard.writeText(text);setOk(true);setTimeout(()=>setOk(false),1500);}catch(_){}},
+    title:"Copy",style:{padding:"2px 9px",fontSize:11,borderRadius:12,border:`1px solid ${C.gold}`,
+      background:"transparent",color:C.gold,cursor:"pointer",marginLeft:6}},ok?"Copied":"Copy");
+}
+function LoginVault(){
+  const [open,setOpen]=useState(false);
+  const [state,setState]=useState("idle"); // idle|loading|locked|view|edit|saving|error
+  const [data,setData]=useState(vaultCache.data);
+  const [draft,setDraft]=useState(null);
+  const [reveal,setReveal]=useState({});
+  const [msg,setMsg]=useState("");
+  const pw=sessionStorage.getItem("cac_pw")||"";
+  const hdr={"Content-Type":"application/json","x-upload-password":pw};
+
+  async function load(){
+    if(vaultCache.data){setData(vaultCache.data);setState("view");return;}
+    setState("loading");setMsg("");
+    try{
+      if(vaultCache.blob===undefined){
+        const r=await fetch(`${API}/vault`,{method:"POST",headers:hdr,body:JSON.stringify({action:"get"})});
+        const d=await r.json();if(!r.ok)throw new Error(d.error||"Could not load");
+        vaultCache.blob=d.blob;
+      }
+      if(!vaultCache.blob){setDraft(VAULT_DEFAULT());setState("edit");setMsg("Nothing saved yet — fill in what you'd like to be reminded of.");return;}
+      try{const obj=await vaultOpen(pw,vaultCache.blob);vaultCache.data=obj;setData(obj);setState("view");}
+      catch(_){setState("locked");setMsg("These notes were saved under a different band password. Enter them again and save to re-encrypt.");}
+    }catch(err){setState("error");setMsg(err.message);}
+  }
+  useEffect(()=>{if(open&&state==="idle")load();},[open]);
+
+  async function save(){
+    setState("saving");setMsg("");
+    try{
+      const clean={entries:(draft.entries||[]).map(x=>({site:String(x.site||"").slice(0,60),url:String(x.url||"").slice(0,300),
+        user:String(x.user||"").slice(0,200),pass:String(x.pass||"").slice(0,200),notes:String(x.notes||"").slice(0,1000)}))
+        .filter(x=>x.site||x.user||x.pass||x.notes)};
+      const blob=await vaultSeal(pw,clean);
+      const r=await fetch(`${API}/vault`,{method:"POST",headers:hdr,body:JSON.stringify({action:"set",blob})});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||"Could not save");
+      vaultCache.blob=blob;vaultCache.data=clean;setData(clean);setDraft(null);setReveal({});setState("view");setMsg("Saved (encrypted).");
+    }catch(err){setState("error");setMsg(err.message);}
+  }
+  const up=(i,k)=>ev=>setDraft(dr=>{const en=dr.entries.slice();en[i]={...en[i],[k]:ev.target.value};return {entries:en};});
+  const field={width:"100%",padding:"8px 10px",fontSize:13.5,borderRadius:8,border:`1.5px solid ${C.line}`,
+    background:"#0E1F3C",color:C.text};
+  const lbl={display:"block",fontSize:11.5,color:C.src,marginBottom:3};
+  const small={padding:"6px 12px",fontSize:12.5,borderRadius:8,border:`1.5px solid ${C.line}`,
+    background:"transparent",color:C.text,cursor:"pointer"};
+  const row=(label,value,secret,i)=>value?e("div",{style:{display:"flex",alignItems:"center",gap:4,fontSize:13.5,marginTop:4,flexWrap:"wrap"}},
+    e("span",{style:{color:C.src,minWidth:90}},label),
+    e("span",{style:{color:C.text,fontFamily:secret?"monospace":"inherit",overflowWrap:"anywhere"}},
+      secret&&!reveal[i]?"••••••••":value),
+    secret&&e("button",{onClick:()=>setReveal(r=>({...r,[i]:!r[i]})),title:reveal[i]?"Hide":"Show",
+      style:{border:0,background:"transparent",color:C.src,cursor:"pointer",fontSize:13}},reveal[i]?"🙈":"👁"),
+    e(CopyChip,{text:value})):null;
+
+  return e("div",{style:{marginBottom:6}},
+    e("button",{onClick:()=>setOpen(v=>!v),"aria-expanded":open,
+      style:{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",borderRadius:8,
+        border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,fontSize:13.5,textAlign:"left",cursor:"pointer"}},
+      e("span",null,open?"▾":"▸"),e("span",null,"🔑 Log-in reminders (YouTube & Facebook)"),
+      e("span",{style:{marginLeft:"auto",fontSize:11.5,color:C.src}},"encrypted with the band password")),
+    open&&e("div",{style:{padding:"12px 12px 4px"}},
+      (state==="loading")&&e("p",{style:{color:C.src,fontSize:13,margin:0}},"Unlocking…"),
+      (state==="view"&&data)&&e("div",null,
+        data.entries.map((x,i)=>e("div",{key:i,style:{marginBottom:12}},
+          e("div",{style:{fontWeight:"bold",color:C.gold,fontSize:14}},x.site||"Site",
+            x.url&&e("a",{href:x.url,target:"_blank",rel:"noopener",style:{marginLeft:8,fontSize:12.5,color:C.blue,fontWeight:"normal"}},"open ↗")),
+          row("Sign-in",x.user,false,"u"+i),
+          row("Password",x.pass,true,"p"+i),
+          x.notes&&e("div",{style:{fontSize:13,color:C.src,marginTop:4,whiteSpace:"pre-wrap"}},x.notes))),
+        e("div",{style:{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}},
+          e("button",{onClick:()=>{setDraft(JSON.parse(JSON.stringify(data)));setState("edit");setMsg("");},style:small},"✎ Edit"),
+          msg&&e("span",{style:{fontSize:12,color:C.src}},msg))),
+      (state==="locked"||state==="error")&&e("div",null,
+        e("p",{style:{color:"#E66A5C",fontSize:13,margin:"0 0 8px"}},msg),
+        e("button",{onClick:()=>{setDraft(VAULT_DEFAULT());setState("edit");setMsg("");},style:small},"Enter them again")),
+      (state==="edit"||state==="saving")&&draft&&e("div",null,
+        msg&&e("p",{style:{color:C.src,fontSize:12.5,margin:"0 0 8px"}},msg),
+        draft.entries.map((x,i)=>e("div",{key:i,style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,
+            padding:"10px 12px",marginBottom:10}},
+          e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
+            e("div",{style:{flex:"1 1 140px"}},e("label",{style:lbl},"Site"),e("input",{style:field,value:x.site,onChange:up(i,"site")})),
+            e("div",{style:{flex:"2 1 220px"}},e("label",{style:lbl},"Where to sign in (link)"),e("input",{style:field,value:x.url,onChange:up(i,"url")}))),
+          e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:8}},
+            e("div",{style:{flex:"1 1 200px"}},e("label",{style:lbl},"Sign-in email / username"),
+              e("input",{style:field,value:x.user,onChange:up(i,"user"),autoComplete:"off"})),
+            e("div",{style:{flex:"1 1 200px"}},e("label",{style:lbl},"Password"),
+              e("input",{style:field,type:"text",value:x.pass,onChange:up(i,"pass"),autoComplete:"off",spellCheck:false}))),
+          e("div",{style:{marginTop:8}},e("label",{style:lbl},"Notes (2-step code phone, recovery email, channel or page name…)"),
+            e("textarea",{style:{...field,resize:"vertical"},rows:2,value:x.notes,onChange:up(i,"notes")})),
+          e("button",{onClick:()=>setDraft(dr=>({entries:dr.entries.filter((_,j)=>j!==i)})),
+            style:{...small,marginTop:8,color:"#E66A5C",borderColor:"#7A4A48",fontSize:12}},"Remove this one"))),
+        e("div",{style:{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}},
+          e("button",{onClick:()=>setDraft(dr=>({entries:dr.entries.concat([{site:"",url:"",user:"",pass:"",notes:""}])})),style:small},"+ Add another site"),
+          e("button",{onClick:save,disabled:state==="saving",style:{...small,background:C.gold,borderColor:C.gold,color:"#0A1628",fontWeight:"bold"}},
+            state==="saving"?"Encrypting & saving…":"Save (encrypted)"),
+          data&&e("button",{onClick:()=>{setDraft(null);setState("view");setMsg("");},style:{...small,border:0,color:C.src}},"Cancel")))));
+}
+
 function PublishKit({song,onEdited}){
   const [open,setOpen]=useState(false);
   const [withLyrics,setWithLyrics]=useState(false);
@@ -1337,7 +1470,8 @@ function PublishKit({song,onEdited}){
         "YouTube "+(ytOk?"✓":"–")+" · Facebook "+(fbOk?"✓":"–"))),
     open&&e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,
         padding:"14px 18px 18px",marginTop:8}},
-      e("div",{style:{fontSize:13,color:C.src,lineHeight:1.55}},
+      e(LoginVault),
+      e("div",{style:{fontSize:13,color:C.src,lineHeight:1.55,marginTop:10}},
         facts&&facts.dur?e("span",null,"This video: "+fmtClip(facts.dur)+
           (facts.w?" · "+facts.w+"×"+facts.h+(vertical?" (vertical)":" (landscape)"):"")+
           (facts.mb?" · "+facts.mb.toFixed(0)+" MB":"")+". "):(facts&&facts.failed?"":"Reading the video's length and shape… "),
