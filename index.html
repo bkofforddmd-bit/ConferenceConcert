@@ -867,7 +867,7 @@ function targetText(t){
 function Header({tab,setTab,bandVersion}){
   const tabs=[["library","Library"],["concert","Build a Concert"],["suggest","Suggest a Talk"],["testimonies","Testimonies"],["games","Games"],["band","Band Upload"]];
   const bandMode=!!sessionStorage.getItem("cac_pw");
-  if(bandMode)tabs.push(["inbox","Suggestions"],["stats","Stats"]);
+  if(bandMode)tabs.push(["inbox","Suggestions"],["stats","Stats"],["daily","Daily posts"]);
   return e("header",{style:{background:C.brown,color:C.cream,
     borderBottom:`4px solid ${C.gold}`}},
     e("div",{style:{padding:"26px 20px 8px",textAlign:"center"}},
@@ -5060,6 +5060,136 @@ function GamesTab({songs,loading}){
         "Hear 15 seconds, then place the song on the timeline by its conference — miss, and the next player can steal it.")));
 }
 
+/* -------------------------------------------------- Daily posts (band) */
+/* One song a day to the Facebook Page, newest conference first. The
+   dailypost-admin function does the work; this panel shows the switch, the
+   connection, the next seven songs with their drafts, and the log.
+   Setup (Page, token, keys) is in SETUP-FACEBOOK.md. */
+function DailyPostsTab(){
+  const [st,setSt]=useState(null);
+  const [state,setState]=useState("loading");
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState({});   // songId -> "draft"|"save"|"post"|"skip"
+  const [edits,setEdits]=useState({}); // songId -> text being edited
+  const [confirm,setConfirm]=useState(null); // songId awaiting "Yes, post it"
+  const pw=sessionStorage.getItem("cac_pw")||"";
+  async function api(body){
+    const r=await fetch(`${API}/dailypost-admin`,{method:"POST",
+      headers:{"Content-Type":"application/json","x-upload-password":pw},body:JSON.stringify(body)});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||"Request failed");return d;
+  }
+  async function load(){setState("loading");try{setSt(await api({action:"status"}));setState("ok");}
+    catch(err){setMsg(err.message);setState("error");}}
+  useEffect(()=>{load();},[]);
+  async function act(songId,kind,body){
+    setBusy(b=>({...b,[songId]:kind}));setMsg("");
+    try{const d=await api(body);
+      if(kind==="post"&&d.posted)setMsg("Posted: "+d.posted.title);
+      await load();
+      if(kind==="draft"&&d.draft)setEdits(e=>{const n={...e};delete n[songId];return n;});
+    }catch(err){setMsg(err.message);}
+    setBusy(b=>{const n={...b};delete n[songId];return n;});setConfirm(null);
+  }
+  const fmtWhen=iso=>{try{return new Date(iso).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});}catch(_){return iso;}};
+  const btn={padding:"7px 13px",fontSize:13,borderRadius:8,border:`1.5px solid ${C.line}`,
+    background:"transparent",color:C.text,cursor:"pointer"};
+  const gold={...btn,background:C.gold,borderColor:C.gold,color:"#0A1628",fontWeight:"bold"};
+  const h2={fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",color:C.src,
+    borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"28px 0 12px"};
+  const dot=ok=>e("span",{style:{display:"inline-block",width:10,height:10,borderRadius:"50%",
+    background:ok?"#5FB87A":"#E66A5C",marginRight:8,verticalAlign:"middle"}});
+
+  return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"22px 20px 60px"}},
+    e("h1",{style:{fontSize:22,color:C.gold,margin:"0 0 6px"}},"One song a day on Facebook"),
+    e("p",{style:{color:C.src,fontSize:13.5,lineHeight:1.6,margin:"0 0 18px"}},
+      "Every morning (about 8–9 AM Eastern) the next song goes to the Page: the video, with a short, plain note on what the speaker said and why it matters today, then the links. ",
+      "Newest conference first, in the order the talks were given. Songs without a video are left for the Publish kit."),
+    state==="loading"&&!st&&e("p",{style:{color:C.src,fontStyle:"italic"}},"Checking…"),
+    state==="error"&&e("p",{style:{color:"#E66A5C"}},msg),
+    st&&e("div",null,
+      /* switch + connection */
+      e("div",{style:{display:"flex",flexWrap:"wrap",gap:12}},
+        e("div",{style:{flex:"1 1 260px",background:C.paper,border:`1.5px solid ${st.enabled?C.gold:C.line}`,borderRadius:12,padding:"14px 16px"}},
+          e("div",{style:{fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase",color:C.src}},"Daily posting"),
+          e("div",{style:{display:"flex",alignItems:"center",gap:12,marginTop:8}},
+            e("span",{style:{fontSize:22,fontWeight:"bold",color:st.enabled?C.gold:C.text}},st.enabled?"ON":"OFF"),
+            e("button",{onClick:()=>act("_toggle","toggle",{action:"toggle",enabled:!st.enabled}),
+              disabled:!!busy._toggle||(!st.enabled&&!(st.facebook&&st.facebook.ok)),
+              style:st.enabled?btn:gold},st.enabled?"Switch off":"Switch on")),
+          e("div",{style:{fontSize:12.5,color:C.src,marginTop:6}},
+            st.lastRunAt?"Last run "+fmtWhen(st.lastRunAt)+". ":"Hasn't run yet. ",
+            st.queueLength+" song"+(st.queueLength===1?"":"s")+" waiting.")),
+        e("div",{style:{flex:"1 1 260px",background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,padding:"14px 16px"}},
+          e("div",{style:{fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase",color:C.src}},"Connections"),
+          e("div",{style:{marginTop:8,fontSize:14,color:C.text}},dot(st.facebook&&st.facebook.ok),
+            st.facebook&&st.facebook.ok
+              ?e("span",null,"Facebook Page: ",e("a",{href:st.facebook.link,target:"_blank",rel:"noopener",style:{color:C.blue}},st.facebook.name))
+              :e("span",null,"Facebook: ",e("span",{style:{color:C.src}},st.facebook?st.facebook.error:"not connected"))),
+          e("div",{style:{marginTop:6,fontSize:14,color:C.text}},dot(st.claude),
+            st.claude?"Writer (Claude): ready":e("span",null,"Writer (Claude): ",e("span",{style:{color:C.src}},"ANTHROPIC_API_KEY not set"))),
+          (!(st.facebook&&st.facebook.ok)||!st.claude)&&e("div",{style:{fontSize:12.5,color:C.src,marginTop:8}},
+            "Setup steps are in SETUP-FACEBOOK.md in the site's files."))),
+
+      /* next up */
+      e("h2",{style:h2},"Next up"),
+      st.next.length===0&&e("p",{style:{color:C.src,fontStyle:"italic"}},"Nothing waiting — every video is already on Facebook."),
+      st.next.map((sg,i)=>{
+        const editing=edits[sg.id]!=null;const text=editing?edits[sg.id]:(sg.draft?sg.draft.text:"");
+        const b=busy[sg.id];
+        return e("div",{key:sg.id,style:{background:C.paper,border:`1.5px solid ${i===0?C.gold:C.line}`,borderRadius:12,padding:"14px 16px",marginBottom:12}},
+          e("div",{style:{display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap"}},
+            e("span",{style:{color:C.src,fontSize:13}},i===0?"Next":"#"+(i+1)),
+            e("span",{style:{fontSize:17,fontWeight:"bold",color:C.gold}},sg.title),
+            e("span",{style:{fontSize:13,color:C.src}},[sg.speaker,sg.session].filter(Boolean).join(" · "))),
+          sg.talk&&e("div",{style:{fontSize:13,color:C.text,fontStyle:"italic",marginTop:3}},"from “"+sg.talk+"”"),
+          e("div",{style:{marginTop:10}},
+            sg.draft||editing
+              ?e("div",null,
+                  e("textarea",{value:text,rows:7,onChange:ev=>setEdits(x=>({...x,[sg.id]:ev.target.value})),
+                    style:{width:"100%",padding:"9px 11px",fontSize:13.5,lineHeight:1.5,borderRadius:8,
+                      border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,resize:"vertical",fontFamily:"Georgia,serif"}}),
+                  e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
+                    sg.draft?(sg.draft.source==="band"?"Your words":"Written by Claude")+" · "+fmtWhen(sg.draft.at)+". ":"",
+                    "The song link, the talk link and two hashtags are added underneath when it posts."))
+              :e("p",{style:{fontSize:13,color:C.src,margin:0,fontStyle:"italic"}},
+                  "No draft yet — it will be written automatically on the morning it posts, or write it now to read it first.")),
+          e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:10,alignItems:"center"}},
+            e("button",{onClick:()=>act(sg.id,"draft",{action:"draft",songId:sg.id}),disabled:!!b||!st.claude,style:btn},
+              b==="draft"?"Writing…":(sg.draft?"✨ Rewrite with Claude":"✨ Write the draft")),
+            editing&&e("button",{onClick:()=>act(sg.id,"save",{action:"saveDraft",songId:sg.id,text:edits[sg.id]}),disabled:!!b,style:gold},
+              b==="save"?"Saving…":"Save my words"),
+            editing&&e("button",{onClick:()=>setEdits(x=>{const n={...x};delete n[sg.id];return n;}),style:{...btn,border:0,color:C.src}},"Cancel"),
+            confirm===sg.id
+              ?e("span",{style:{display:"inline-flex",gap:8,alignItems:"center"}},
+                  e("span",{style:{fontSize:12.5,color:C.src}},"Post “"+sg.title+"” to the Page now?"),
+                  e("button",{onClick:()=>act(sg.id,"post",{action:"postNow",songId:sg.id}),disabled:!!b,style:gold},b==="post"?"Posting…":"Yes, post it"),
+                  e("button",{onClick:()=>setConfirm(null),style:{...btn,border:0,color:C.src}},"No"))
+              :e("button",{onClick:()=>setConfirm(sg.id),disabled:!!b||!(st.facebook&&st.facebook.ok),style:btn},"📣 Post this one now"),
+            e("button",{onClick:()=>act(sg.id,"skip",{action:"skip",songId:sg.id}),disabled:!!b,
+              style:{...btn,marginLeft:"auto",color:C.src}},"Skip")));
+      }),
+      msg&&e("p",{style:{color:/^Posted/.test(msg)?C.gold:"#E66A5C",fontSize:13.5}},msg),
+
+      st.skipped.length>0&&e("div",null,
+        e("h2",{style:h2},"Skipped"),
+        e("div",{style:{display:"flex",flexWrap:"wrap",gap:8}},
+          st.skipped.map(x=>e("button",{key:x.id,onClick:()=>act(x.id,"skip",{action:"skip",songId:x.id,undo:true}),
+            title:"Put it back in the queue",style:{...btn,fontSize:12.5}},x.title+" ↩")))),
+
+      e("h2",{style:h2},"Log"),
+      st.log.length===0
+        ?e("p",{style:{color:C.src,fontStyle:"italic"}},"Nothing yet.")
+        :e("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+          st.log.map((l,i)=>e("div",{key:i,style:{display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap",
+              background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,padding:"8px 12px",fontSize:13.5}},
+            e("span",{style:{color:C.src,whiteSpace:"nowrap"}},l.date),
+            e("span",{style:{color:l.status==="posted"?"#7FD89A":l.status==="error"?"#E66A5C":C.src,fontWeight:"bold"}},
+              l.status==="posted"?"Posted":l.status==="error"?"Failed":"Nothing to post"),
+            e("span",{style:{color:C.text,flex:1}},l.title||l.note||""),
+            l.url&&e("a",{href:l.url,target:"_blank",rel:"noopener",style:{color:C.blue}},"open ↗"),
+            l.error&&e("span",{style:{color:"#E66A5C",width:"100%",fontSize:12.5}},l.error))))));
+}
+
 /* ------------------------------------------------------- Stats (band) */
 /* Reads the aggregated usage report (visits, listening time, plays, concerts,
    shares) and draws it: tiles, a daily listening chart, top songs, top
@@ -5224,6 +5354,7 @@ function App(){
     tab==="games"&&e(GamesTab,{songs,loading}),
     tab==="inbox"&&e(SuggestionsInbox),
     tab==="stats"&&e(StatsTab,{songs}),
+    tab==="daily"&&e(DailyPostsTab),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();},onBandChange}),
     e(ShuffleBar),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
