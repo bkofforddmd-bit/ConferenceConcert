@@ -30,7 +30,10 @@ admin of this Page.
    - `pages_show_list`
    - `pages_read_engagement`
    - `pages_manage_posts`
-   - `publish_video`
+   (Posting a video to a Page is covered by `pages_manage_posts`; Meta does not
+   offer `publish_video` for Pages, so do not look for it.)
+   If the Explorer does not list a permission, add it to the app first:
+   dashboard → Use cases → Customize "Manage everything on your Page" → Add.
    Continue and allow.
 4. The **Access Token** box now holds a *Page* token. It expires in about an
    hour — we need the long-lived one:
