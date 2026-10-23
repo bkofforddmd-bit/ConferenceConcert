@@ -64,6 +64,7 @@ function ShareButton({title,text,url,label,small,style}){
   const [status,setStatus]=useState("");
   async function go(ev){
     ev&&ev.stopPropagation();
+    usage.event("share",{what:label||"Share"});
     const r=await shareOrCopy({title,text,url});
     if(r==="copied")setStatus("Link copied!");
     else if(r==="failed")setStatus("Couldn't share");
@@ -211,16 +212,7 @@ function buildGmailComposeTo(to,subject,body){
     "&body="+encodeURIComponent(body);
 }
 
-/* ------------------------------------------------- Access gate helpers */
-/* The app is shared by request: visitors ask for access with their email and
-   a link to their favorite General Conference talk, and the band emails back
-   an access code. Because the code only travels by email, a made-up address
-   never gets in. Saved-concert share links (?concert=...) skip the gate —
-   those were already shared on purpose. */
-const ACCESS_LS_KEY="cac_access";
-function hasAppAccess(){
-  return !!(localStorage_get(ACCESS_LS_KEY)||sessionStorage.getItem("cac_pw"));
-}
+/* Is this a General Conference talk link? (used by the Prophet-or-Lyric game) */
 function isConferenceTalkUrl(s){
   try{
     const u=new URL(String(s||"").trim());
@@ -229,10 +221,65 @@ function isConferenceTalkUrl(s){
   }catch(_){return false;}
 }
 
+/* ----------------------------------------------------- Usage tracker */
+/* Anonymous counters so the band can see how the app is used: visits,
+   seconds actually spent listening (per song), saved concerts opened, shares,
+   tabs. No names, no emails — just a random per-device id so "how many
+   people" can be counted. Batches go to the stats function every few minutes
+   and when the page is hidden (sendBeacon), so nothing is lost on close.
+   Every <audio>/<video> is observed by wrapping play(), which also catches
+   the detached players (library previews, shuffle play). YouTube embeds
+   can't be measured, so a song watched on YouTube counts only as a visit. */
+const usage=(()=>{
+  const DID_KEY="cac_did";
+  let did=localStorage_get(DID_KEY),fresh=false;
+  if(!did){did=Math.random().toString(36).slice(2,10)+Date.now().toString(36);fresh=true;localStorage_set(DID_KEY,did);}
+  const q=[];const bySrc=new Map();const listen=new Map();
+  function setCatalog(songs){(songs||[]).forEach(s=>{if(s&&s.audioUrl&&s.id)bySrc.set(String(s.audioUrl).split("?")[0],s.id);});}
+  function songFor(src){if(!src)return null;return bySrc.get(String(src).split("?")[0])||null;}
+  function event(type,data){q.push(Object.assign({t:type,at:Date.now()},data||{}));if(q.length>=50)flush(false);}
+  function bump(el,sec,plays){const id=songFor(el.currentSrc||el.src)||"other";
+    const v=listen.get(id)||{sec:0,plays:0};v.sec+=sec;v.plays+=plays;listen.set(id,v);}
+  function flush(hiding){
+    const lis=[...listen.entries()].filter(([,v])=>v.sec>=1||v.plays>0)
+      .map(([song,v])=>({t:"listen",at:Date.now(),song,sec:Math.round(v.sec),plays:v.plays}));
+    listen.clear();
+    const events=q.splice(0).concat(lis);if(!events.length)return;
+    const body=JSON.stringify({did,events});
+    try{
+      if(hiding&&navigator.sendBeacon&&navigator.sendBeacon(API+"/stats",new Blob([body],{type:"application/json"})))return;
+      fetch(API+"/stats",{method:"POST",headers:{"Content-Type":"application/json"},body,keepalive:true}).catch(()=>{});
+    }catch(_){}
+  }
+  const seen=new WeakSet();
+  function watch(el){
+    if(seen.has(el))return;seen.add(el);
+    let last=null;
+    el.addEventListener("play",()=>{last=el.currentTime;bump(el,0,1);});
+    el.addEventListener("timeupdate",()=>{
+      if(el.paused||el.seeking)return;const t=el.currentTime;
+      if(last!=null){const d=t-last;if(d>0&&d<2)bump(el,d,0);}
+      last=t;});
+    ["seeking","pause","ended","emptied"].forEach(k=>el.addEventListener(k,()=>{last=null;}));
+  }
+  try{
+    const nativePlay=HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play=function(){watch(this);return nativePlay.apply(this,arguments);};
+  }catch(_){}
+  setInterval(()=>flush(false),180000);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")flush(true);});
+  window.addEventListener("pagehide",()=>flush(true));
+  let ref="";try{ref=document.referrer?new URL(document.referrer).hostname:"";}catch(_){}
+  event("visit",{concert:new URLSearchParams(location.search).get("concert")||"",ref,
+    pwa:!!(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||!!navigator.standalone,fresh});
+  return {setCatalog,event,flush};
+})();
+
 /* Share a link via the phone's native share sheet, falling back to copy on desktop.
    The URL is also appended to the text, because some apps (notably email) keep only
    one field — this guarantees the link travels no matter the channel. */
 async function shareLink(title,text,url){
+  usage.event("share",{what:title||"link"});
   const combined=text?(text+"\n"+url):url;
   try{
     if(navigator.share){
@@ -820,7 +867,7 @@ function targetText(t){
 function Header({tab,setTab,bandVersion}){
   const tabs=[["library","Library"],["concert","Build a Concert"],["suggest","Suggest a Talk"],["testimonies","Testimonies"],["games","Games"],["band","Band Upload"]];
   const bandMode=!!sessionStorage.getItem("cac_pw");
-  if(bandMode)tabs.push(["inbox","Suggestions"],["requests","Requests"]);
+  if(bandMode)tabs.push(["inbox","Suggestions"],["stats","Stats"]);
   return e("header",{style:{background:C.brown,color:C.cream,
     borderBottom:`4px solid ${C.gold}`}},
     e("div",{style:{padding:"26px 20px 8px",textAlign:"center"}},
@@ -2005,284 +2052,8 @@ function SuggestionsInbox(){
   );
 }
 
-/* --------------------------------------------------- Access gate (visitors) */
-function AccessGate({onUnlocked}){
-  const [name,setName]=useState("");
-  const [email,setEmail]=useState("");
-  const [talkUrl,setTalkUrl]=useState("");
-  const [note,setNote]=useState("");
-  const [state,setState]=useState("idle"); // idle|sending|sent|error
-  const [msg,setMsg]=useState("");
-  const [code,setCode]=useState("");
-  const [codeState,setCodeState]=useState("idle"); // idle|checking|error
-  const [codeMsg,setCodeMsg]=useState("");
-
-  async function submit(){
-    if(!name.trim()){setState("error");setMsg("Please tell us your name.");return;}
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())){
-      setState("error");setMsg("Please enter a real email address — that's where your access code will be sent.");return;}
-    if(!isConferenceTalkUrl(talkUrl)){
-      setState("error");
-      setMsg("That link doesn't look like a General Conference talk on churchofjesuschrist.org. "+
-        "Open your favorite talk on the Church website, copy the address from the top of the browser, and paste it here.");
-      return;}
-    setState("sending");setMsg("");
-    try{
-      const r=await fetch(`${API}/access`,{method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({name:name.trim(),email:email.trim(),talkUrl:talkUrl.trim(),note:note.trim()})});
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Could not send your request — try again in a moment.");
-      setState("sent");
-    }catch(err){setState("error");setMsg(err.message);}
-  }
-
-  async function redeem(){
-    if(!code.trim()){setCodeState("error");setCodeMsg("Enter your access code first.");return;}
-    setCodeState("checking");setCodeMsg("");
-    try{
-      const r=await fetch(`${API}/access`,{method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({action:"redeem",code:code.trim()})});
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"That code didn't work — try again in a moment.");
-      localStorage_set(ACCESS_LS_KEY,code.trim());
-      if(d.band)try{sessionStorage.setItem("cac_pw",code.trim());}catch(_){}
-      onUnlocked();
-    }catch(err){setCodeState("error");setCodeMsg(err.message);}
-  }
-
-  const lbl={display:"block",fontSize:13,color:C.src,marginBottom:5,letterSpacing:"0.02em"};
-  const field={width:"100%",padding:"11px 12px",fontSize:15,borderRadius:8,
-    border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text};
-  const card={background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:14,
-    padding:"22px 22px 24px",marginTop:18};
-
-  return e("div",null,
-    e("header",{style:{background:C.brown,color:C.cream,borderBottom:`4px solid ${C.gold}`}},
-      e("div",{style:{padding:"30px 20px 22px",textAlign:"center"}},
-        e("img",{src:"banner.webp",alt:"Conference as a Concert",
-            style:{maxWidth:"min(820px,100%)",width:"100%",height:"auto",display:"block",
-              margin:"0 auto",borderRadius:14,boxShadow:"0 10px 30px rgba(0,0,0,.45)"}}),
-        e("div",{style:{fontSize:15,fontStyle:"italic",color:"#E8D4A8",marginTop:6}},
-          "The Song Library"))),
-    e("main",{style:{maxWidth:620,margin:"0 auto",padding:"26px 20px 60px"}},
-      e("h1",{style:{fontSize:24,color:C.gold,margin:"6px 0 10px",textAlign:"center"}},
-        "A concert, shared by request"),
-      e("p",{style:{color:C.text,lineHeight:1.65,fontSize:15.5,textAlign:"center",margin:"0 0 4px"}},
-        "General Conference talks, set to music. We share this library person to person. ",
-        "Tell us who you are and paste a link to your favorite conference talk — ",
-        "we'll email you an access code."),
-
-      state==="sent"
-        ? e("div",{style:{...card,borderColor:C.gold,textAlign:"center"}},
-            e("div",{style:{fontSize:34,marginBottom:8}},"🎶"),
-            e("div",{style:{fontSize:19,color:C.gold,fontWeight:"bold",marginBottom:8}},
-              "Request sent!"),
-            e("p",{style:{color:C.text,lineHeight:1.6,margin:0}},
-              "Watch your inbox — once the band approves your request, your access code will arrive at ",
-              e("b",null,email.trim()),
-              ". When it does, come back here and enter it below."))
-        : e("div",{style:card},
-            e("div",{style:{display:"grid",gap:14}},
-              e("div",null,e("label",{style:lbl,htmlFor:"g-name"},"Your name"),
-                e("input",{id:"g-name",style:field,value:name,maxLength:80,
-                  onChange:ev=>setName(ev.target.value),placeholder:"First and last name"})),
-              e("div",null,e("label",{style:lbl,htmlFor:"g-email"},"Email (your access code is sent here)"),
-                e("input",{id:"g-email",type:"email",style:field,value:email,maxLength:160,
-                  onChange:ev=>setEmail(ev.target.value),placeholder:"you@example.com"})),
-              e("div",null,
-                e("label",{style:lbl,htmlFor:"g-talk"},"Link to your favorite General Conference talk"),
-                e("input",{id:"g-talk",type:"url",style:field,value:talkUrl,maxLength:500,
-                  onChange:ev=>setTalkUrl(ev.target.value),
-                  placeholder:"https://www.churchofjesuschrist.org/study/general-conference/..."}),
-                e("div",{style:{fontSize:12,color:C.src,marginTop:5,lineHeight:1.55}},
-                  "Find it at ",
-                  e("a",{href:"https://www.churchofjesuschrist.org/study/general-conference?lang=eng",
-                    target:"_blank",rel:"noopener noreferrer"},"churchofjesuschrist.org"),
-                  " → open the talk → copy the address from the top of your browser (or use the share button).")),
-              e("div",null,e("label",{style:lbl,htmlFor:"g-note"},"What do you love about that talk? (optional)"),
-                e("textarea",{id:"g-note",style:{...field,minHeight:70,resize:"vertical"},
-                  value:note,maxLength:600,onChange:ev=>setNote(ev.target.value),
-                  placeholder:"A line or two is plenty."})),
-              state==="error"&&e("p",{style:{color:"#E66A5C",margin:0,lineHeight:1.5}},msg),
-              e("button",{onClick:submit,disabled:state==="sending",
-                style:{padding:"12px 22px",fontSize:16,fontWeight:"bold",border:0,borderRadius:8,
-                  background:C.gold,color:"#0A1628",opacity:state==="sending"?0.7:1}},
-                state==="sending"?"Sending…":"Request access"))),
-
-      e("div",{style:{...card,marginTop:16}},
-        e("div",{style:{fontSize:15,color:C.gold,fontWeight:"bold",marginBottom:10}},
-          "Already have a code?"),
-        e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
-          e("input",{style:{...field,maxWidth:220},value:code,
-            maxLength:60,autoCapitalize:"none",autoCorrect:"off",spellCheck:false,
-            onChange:ev=>setCode(ev.target.value),
-            onKeyDown:ev=>{if(ev.key==="Enter")redeem();},
-            placeholder:"Access code or band password","aria-label":"Access code or band password"}),
-          e("button",{onClick:redeem,disabled:codeState==="checking",
-            style:{padding:"11px 20px",fontSize:15,border:`1.5px solid ${C.blue}`,borderRadius:8,
-              background:"transparent",color:C.blue,fontWeight:"bold"}},
-            codeState==="checking"?"Checking…":"Enter the concert")),
-        codeMsg&&e("p",{style:{color:"#E66A5C",marginTop:10,marginBottom:0,lineHeight:1.5}},codeMsg)),
-
-      e("p",{style:{fontSize:12.5,color:C.src,textAlign:"center",lineHeight:1.6,marginTop:22}},
-        "Got a concert link from a friend? Those open directly — no code needed.")),
-    e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
-      borderTop:`1px solid ${C.line}`,background:C.paper}},
-      e(AboutAI),
-      "Conference as a Concert · Y-Mountain Music Co."));
-}
-
-/* ----------------------------------------- Access requests inbox (band) */
-function AccessInbox(){
-  const [items,setItems]=useState(null);
-  const [error,setError]=useState("");
-  const [filter,setFilter]=useState("pending"); // pending|all
-  const [inviteLabel,setInviteLabel]=useState("");
-  const [inviteBusy,setInviteBusy]=useState(false);
-  const [confirmDel,setConfirmDel]=useState("");
-  const pw=sessionStorage.getItem("cac_pw")||"";
-
-  async function call(payload){
-    const r=await fetch(`${API}/access`,{method:"POST",
-      headers:{"Content-Type":"application/json","x-upload-password":pw},
-      body:JSON.stringify(payload)});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.error||"Request failed");
-    return d;
-  }
-  async function load(){
-    setError("");
-    try{const d=await call({action:"list"});setItems(d.requests||[]);}
-    catch(err){setError(err.message);setItems([]);}
-  }
-  useEffect(()=>{load();},[]);
-
-  async function act(payload){try{await call(payload);}catch(_){}load();}
-  async function invite(){
-    setInviteBusy(true);
-    try{await call({action:"invite",label:inviteLabel.trim()});setInviteLabel("");}
-    catch(_){}
-    setInviteBusy(false);load();
-  }
-
-  if(items===null)return e("main",{style:{maxWidth:720,margin:"0 auto",padding:"40px 20px"}},
-    e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic"}},"Loading access requests…"));
-
-  const shown=items.filter(r=>filter==="all"||r.status==="pending");
-  const fmtDate=(iso)=>{try{return new Date(iso).toLocaleDateString(undefined,
-    {month:"short",day:"numeric",year:"numeric"});}catch(_){return"";}};
-  const appUrl=location.origin+location.pathname;
-
-  function codeEmail(r){
-    const subject="Your access code — Conference as a Concert";
-    const body=
-      "Hi "+(r.name||"there")+",\n\n"+
-      "Welcome to Conference as a Concert! Here's your access code:\n\n"+
-      "    "+r.code+"\n\n"+
-      "Open the app and enter it under “Already have a code?”:\n"+appUrl+"\n\n"+
-      "Thanks for sharing your favorite talk with us — we hope the music blesses you.\n\n"+
-      "Y-Mountain Music Co.";
-    return buildGmailComposeTo(r.email,subject,body);
-  }
-
-  const badge=(bg,fg,text)=>e("span",{style:{fontSize:11,padding:"2px 9px",borderRadius:10,
-    background:bg,color:fg}},text);
-
-  return e("main",{style:{maxWidth:720,margin:"0 auto",padding:"24px 20px 60px"}},
-    e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",
-      flexWrap:"wrap",gap:10,marginBottom:16}},
-      e("p",{style:{color:C.src,lineHeight:1.6,margin:0}},
-        "People asking to use the app. Approve a request, then email them their code — ",
-        "the code only travels by email, so a made-up address never gets in."),
-      e("div",{style:{display:"flex",gap:6}},
-        ["pending","all"].map(fk=>e("button",{key:fk,onClick:()=>setFilter(fk),
-          "aria-pressed":filter===fk,
-          style:{padding:"6px 14px",fontSize:13,borderRadius:16,
-            border:`1.5px solid ${filter===fk?C.gold:C.line}`,
-            background:filter===fk?C.gold:"transparent",
-            color:filter===fk?"#0A1628":C.src}},fk==="pending"?"Pending":"All")))),
-    error&&e("p",{style:{color:"#E66A5C"}},error),
-
-    e("div",{style:{background:C.paper,border:`1.5px dashed ${C.line}`,borderRadius:12,
-      padding:"14px 16px",marginBottom:16}},
-      e("div",{style:{fontSize:13,color:C.gold,fontWeight:"bold",marginBottom:8}},
-        "➕ Mint a code directly (family, friends — no request needed)"),
-      e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
-        e("input",{style:{flex:"1 1 200px",padding:"8px 10px",fontSize:14,borderRadius:8,
-          border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text},
-          value:inviteLabel,maxLength:80,onChange:ev=>setInviteLabel(ev.target.value),
-          placeholder:"Who is it for? e.g. Ostler cousins"}),
-        e("button",{onClick:invite,disabled:inviteBusy,
-          style:{padding:"8px 16px",fontSize:14,border:0,borderRadius:8,
-            background:C.blue,color:"#0A1628",fontWeight:"bold"}},
-          inviteBusy?"Minting…":"Mint code"))),
-
-    shown.length===0&&e("p",{style:{textAlign:"center",color:C.src,fontStyle:"italic",
-      padding:"40px 0"}},filter==="pending"?"No pending requests — all caught up!":"No requests yet."),
-    e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
-      shown.map(r=>e("div",{key:r.id,style:{background:C.paper,
-        border:`1.5px solid ${r.status==="pending"?C.gold:C.line}`,borderRadius:12,
-        padding:"16px 18px",opacity:r.status==="denied"?0.6:1}},
-        e("div",{style:{display:"flex",justifyContent:"space-between",gap:10,
-          flexWrap:"wrap",alignItems:"baseline"}},
-          e("div",{style:{fontSize:18,fontWeight:"bold",color:C.gold}},
-            r.name||"(no name)"),
-          e("div",{style:{fontSize:12,color:C.src}},fmtDate(r.createdAt))),
-        e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:6,alignItems:"center"}},
-          r.status==="pending"&&badge("#4A3A1E","#E0C07A","Pending"),
-          r.status==="approved"&&badge("#1E4D2B","#7FD89A","Approved"),
-          r.status==="denied"&&badge("#4A2222","#E08A8A","Denied"),
-          r.invited&&badge("#1F3457",C.src,"Invited"),
-          (r.requestCount||0)>1&&badge("#1F3457",C.src,"Asked "+r.requestCount+"×"),
-          (r.redeemCount||0)>0&&badge("#1E4D2B","#7FD89A","Code used ✓")),
-        r.email&&e("div",{style:{fontSize:14,color:C.text,marginTop:8,wordBreak:"break-all"}},
-          r.email),
-        r.talkUrl&&e("div",{style:{marginTop:6}},
-          e("a",{href:r.talkUrl,target:"_blank",rel:"noopener noreferrer",
-            style:{fontSize:13,color:C.blue}},"Open their favorite talk →")),
-        r.note&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:8,lineHeight:1.5,
-          fontStyle:"italic"}},"“"+r.note+"”"),
-        r.status==="approved"&&r.code&&e("div",{style:{marginTop:10,display:"flex",gap:10,
-          alignItems:"center",flexWrap:"wrap"}},
-          e("span",{style:{fontFamily:"monospace",fontSize:17,letterSpacing:"0.08em",
-            background:"#0E1F3C",border:`1.5px solid ${C.gold}`,borderRadius:8,
-            padding:"6px 12px",color:C.gold}},r.code),
-          e("button",{onClick:()=>{if(navigator.clipboard)navigator.clipboard.writeText(r.code);},
-            style:{padding:"5px 12px",fontSize:12,borderRadius:6,
-              border:`1px solid ${C.line}`,background:"transparent",color:C.src}},"copy")),
-        e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginTop:12,alignItems:"center"}},
-          r.status!=="approved"&&e("button",{onClick:()=>act({action:"approve",id:r.id}),
-            style:{padding:"6px 14px",fontSize:13,borderRadius:8,border:0,
-              background:C.gold,color:"#0A1628",fontWeight:"bold"}},"✓ Approve"),
-          r.status==="approved"&&r.email&&e("a",{href:codeEmail(r),
-            target:"_blank",rel:"noopener noreferrer",
-            style:{padding:"6px 14px",fontSize:13,borderRadius:8,textDecoration:"none",
-              border:`1.5px solid ${C.gold}`,background:"transparent",color:C.gold,
-              fontWeight:"bold"}},"✉️ Email them the code"),
-          r.status!=="denied"&&!r.invited&&e("button",{onClick:()=>act({action:"deny",id:r.id}),
-            style:{padding:"6px 14px",fontSize:13,borderRadius:8,
-              border:`1.5px solid ${C.line}`,background:"transparent",color:C.src}},"Deny"),
-          confirmDel===r.id
-            ? e("span",{style:{marginLeft:"auto",display:"inline-flex",gap:8,alignItems:"center"}},
-                e("span",{style:{fontSize:12,color:"#E66A5C"}},"Delete for good?"),
-                e("button",{onClick:()=>{setConfirmDel("");act({action:"delete",id:r.id});},
-                  style:{padding:"5px 12px",fontSize:12,borderRadius:6,border:0,
-                    background:"#7A2E2A",color:"#FFD9D4",fontWeight:"bold"}},"Yes, delete"),
-                e("button",{onClick:()=>setConfirmDel(""),
-                  style:{padding:"5px 12px",fontSize:12,borderRadius:6,
-                    border:`1px solid ${C.line}`,background:"transparent",color:C.src}},"Keep"))
-            : e("button",{onClick:()=>setConfirmDel(r.id),
-                style:{padding:"6px 12px",fontSize:13,borderRadius:8,marginLeft:"auto",
-                  border:`1.5px solid #7A4A48`,background:"transparent",color:"#E66A5C"}},
-                "Delete")))),
-    ),
-  );
-}
-
 /* ----------------------------- "Made by humans, with AI" honesty note */
-/* Shown in every footer (gate, app, concert player). One quiet line that
+/* Shown in every footer (app, concert player). One quiet line that
    expands into the full story — AI was the instrument, the people are the
    point. Inline expand, no popups. */
 function AboutAI(){
@@ -2668,8 +2439,8 @@ function Testimonies({songs}){
 }
 
 /* --------------------- Share-your-experience card on shared concerts */
-/* Concert links skip the access gate, so this is many listeners' only doorway
-   back to us — a quiet invitation right where the music just played. */
+/* Shared concert links land straight on the player, so this is many
+   listeners' doorway back to us — a quiet invitation where the music played. */
 function TestimonySection({songs}){
   const [open,setOpen]=useState(false);
   return e("div",{style:{marginTop:24}},
@@ -3531,13 +3302,16 @@ function ConcertPlayer({id,focusSongId}){
         const d=await r.json();
         if(!r.ok)throw new Error(d.error||"Could not load concert");
         setData(d);
+        usage.setCatalog(d.songs||[]);
+        usage.event("concert",{id});
         // Keep any offline copy of this concert fresh while we're online.
         const m=offlineMap();
         if(m[id]){m[id].name=d.name;m[id].data=d;offlineMapSet(m);}
       }catch(err){
         // No network? Fall back to the copy saved for offline listening.
         const off=offlineMap()[id];
-        if(off&&off.data){setData(off.data);setFromOffline(true);}
+        if(off&&off.data){setData(off.data);setFromOffline(true);
+          usage.setCatalog(off.data.songs||[]);usage.event("concert",{id});}
         else setError(err.message);
       }
     })();
@@ -4963,6 +4737,127 @@ function GamesTab({songs,loading}){
         "Hear 15 seconds, then place the song on the timeline by its conference — miss, and the next player can steal it.")));
 }
 
+/* ------------------------------------------------------- Stats (band) */
+/* Reads the aggregated usage report (visits, listening time, plays, concerts,
+   shares) and draws it: tiles, a daily listening chart, top songs, top
+   concerts. Nothing here is personal — counts only. */
+function fmtDur(sec){
+  sec=Math.round(sec||0);
+  if(sec<60)return sec+" sec";
+  const h=Math.floor(sec/3600),m=Math.round((sec%3600)/60);
+  return h?h+" h "+m+" min":m+" min";
+}
+function fmtDay(iso){
+  try{return new Date(iso+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"});}catch(_){return iso;}
+}
+function StatsTab({songs}){
+  const RANGES=[[7,"7 days"],[30,"30 days"],[90,"90 days"],[0,"All time"]];
+  const [days,setDays]=useState(30);
+  const [data,setData]=useState(null);
+  const [state,setState]=useState("loading");
+  const [msg,setMsg]=useState("");
+  const pw=sessionStorage.getItem("cac_pw")||"";
+  const titleOf=id=>{const s=songs.find(x=>x.id===id);
+    return s?s.title:(id==="other"?"(other audio / previews)":"Song "+id);};
+  async function load(){
+    setState("loading");
+    try{
+      const r=await fetch(`${API}/stats?days=${days}`,{headers:{"x-upload-password":pw}});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||"Could not load");
+      setData(d);setState("ok");
+    }catch(err){setMsg(err.message);setState("error");}
+  }
+  useEffect(()=>{load();},[days]);
+
+  const tile=(label,value,sub)=>e("div",{style:{flex:"1 1 150px",background:C.paper,
+      border:`1.5px solid ${C.line}`,borderRadius:12,padding:"14px 16px"}},
+    e("div",{style:{fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase",color:C.src}},label),
+    e("div",{style:{fontSize:28,fontWeight:"bold",color:C.gold,marginTop:4}},value),
+    sub&&e("div",{style:{fontSize:12.5,color:C.src,marginTop:2}},sub));
+
+  // Daily chart: every day in the range, zero-filled.
+  function chart(){
+    if(!data)return null;
+    const byDate=new Map(data.days.map(d=>[d.date,d]));
+    const end=new Date(data.range.to+"T12:00:00");
+    const n=days||Math.max(1,Math.round((end-new Date((data.firstDate||data.range.to)+"T12:00:00"))/86400000)+1);
+    const cols=[];
+    for(let i=n-1;i>=0;i--){const dt=new Date(end.getTime()-i*86400000);
+      const iso=dt.toISOString().slice(0,10);const d=byDate.get(iso)||{};
+      cols.push({iso,min:(d.listenSec||0)/60,visits:d.visits||0});}
+    const maxMin=Math.max(1,...cols.map(c=>c.min)),maxV=Math.max(1,...cols.map(c=>c.visits));
+    const W=Math.max(320,cols.length*14),H=170,padB=24,padT=10,bw=W/cols.length;
+    return e("div",{style:{overflowX:"auto"}},
+      e("svg",{viewBox:`0 0 ${W} ${H}`,style:{width:"100%",minWidth:Math.min(W,640),height:"auto",display:"block"},
+        role:"img","aria-label":"Minutes listened per day"},
+        cols.map((c,i)=>{const h=(H-padB-padT)*c.min/maxMin;
+          return e("rect",{key:c.iso,x:i*bw+bw*0.15,y:H-padB-h,width:bw*0.7,height:Math.max(h,c.min>0?2:0),
+            fill:C.gold,rx:2},e("title",null,fmtDay(c.iso)+": "+Math.round(c.min)+" min listened, "+c.visits+" visits"));}),
+        e("polyline",{points:cols.map((c,i)=>(i*bw+bw/2)+","+(H-padB-(H-padB-padT)*c.visits/maxV)).join(" "),
+          fill:"none",stroke:C.blue,strokeWidth:1.5,opacity:0.9}),
+        cols.map((c,i)=>(cols.length<=14||i%Math.ceil(cols.length/10)===0)&&e("text",{key:"t"+c.iso,
+          x:i*bw+bw/2,y:H-6,fontSize:10,fill:C.src,textAnchor:"middle"},fmtDay(c.iso)))),
+      e("div",{style:{display:"flex",gap:16,fontSize:12,color:C.src,marginTop:4}},
+        e("span",null,e("span",{style:{display:"inline-block",width:10,height:10,background:C.gold,borderRadius:2,marginRight:5}}),"Minutes listened"),
+        e("span",null,e("span",{style:{display:"inline-block",width:16,height:2,background:C.blue,verticalAlign:"middle",marginRight:5}}),"Visits")));
+  }
+
+  const t=data&&data.totals;
+  return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"22px 20px 60px"}},
+    e("div",{style:{display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",justifyContent:"space-between"}},
+      e("h1",{style:{fontSize:22,color:C.gold,margin:0}},"How the app is being used"),
+      e("div",{role:"group","aria-label":"Range",style:{display:"flex",gap:6,flexWrap:"wrap"}},
+        RANGES.map(([d,label])=>e("button",{key:d,onClick:()=>setDays(d),"aria-pressed":days===d,
+          style:{padding:"7px 14px",fontSize:14,borderRadius:20,
+            border:`1.5px solid ${days===d?C.gold:C.line}`,
+            background:days===d?C.gold:C.paper,color:days===d?"#0A1628":C.text,cursor:"pointer"}},label)))),
+    e("p",{style:{color:C.src,fontSize:13.5,lineHeight:1.6,margin:"8px 0 18px"}},
+      "Counts only — no names or emails. A \"listener\" is a device that opened the app; listening time is ",
+      "seconds the music actually played (previews, full songs, concerts, games, shuffle). YouTube-only songs can't be timed."),
+    state==="loading"&&e("p",{style:{color:C.src,fontStyle:"italic"}},"Adding it up…"),
+    state==="error"&&e("p",{style:{color:"#E66A5C"}},msg),
+    state==="ok"&&t&&e("div",null,
+      e("div",{style:{display:"flex",flexWrap:"wrap",gap:12}},
+        tile("Visits",t.visits,t.pwa?t.pwa+" from the home-screen app":null),
+        tile("Listeners",t.uniqueDevices,t.newDevices+" new"),
+        tile("Listening time",fmtDur(t.listenSec),t.plays+" plays"),
+        tile("Concerts opened",t.concertOpens,t.concertLinkVisits+" arrived by concert link"),
+        tile("Shares",t.shares,null)),
+      e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",color:C.src,
+        borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"28px 0 12px"}},"Day by day"),
+      chart(),
+      e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",color:C.src,
+        borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"28px 0 12px"}},"Most listened songs"),
+      data.topSongs.length===0
+        ?e("p",{style:{color:C.src,fontStyle:"italic"}},"No listening recorded in this range yet.")
+        :e("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+          data.topSongs.slice(0,25).map((sg,i)=>e("div",{key:sg.id,style:{display:"flex",gap:10,alignItems:"center",
+              background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,padding:"8px 12px"}},
+            e("span",{style:{color:C.src,width:24,textAlign:"right",fontSize:13}},i+1+"."),
+            e("span",{style:{flex:1,color:C.text,overflowWrap:"anywhere"}},titleOf(sg.id)),
+            e("span",{style:{color:C.gold,fontWeight:"bold",whiteSpace:"nowrap"}},fmtDur(sg.sec)),
+            e("span",{style:{color:C.src,fontSize:12.5,whiteSpace:"nowrap"}},sg.plays+" plays · "+sg.listeners+" listener"+(sg.listeners===1?"":"s"))))),
+      data.topConcerts.length>0&&e("div",null,
+        e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",color:C.src,
+          borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"28px 0 12px"}},"Concerts opened"),
+        e("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+          data.topConcerts.slice(0,25).map(c=>e("div",{key:c.id,style:{display:"flex",gap:10,alignItems:"center",
+              background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,padding:"8px 12px"}},
+            e("a",{href:"?concert="+encodeURIComponent(c.id),style:{flex:1,color:C.blue,overflowWrap:"anywhere"}},c.id),
+            e("span",{style:{color:C.gold,fontWeight:"bold"}},c.opens+" open"+(c.opens===1?"":"s")))))),
+      data.tabs&&Object.keys(data.tabs).length>0&&e("div",null,
+        e("h2",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",color:C.src,
+          borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"28px 0 12px"}},"Tabs opened"),
+        e("div",{style:{display:"flex",flexWrap:"wrap",gap:8}},
+          Object.entries(data.tabs).sort((a,b)=>b[1]-a[1]).map(([k,n])=>e("span",{key:k,
+            style:{padding:"5px 12px",borderRadius:16,background:"#1F3457",color:C.text,fontSize:13}},k+" · "+n)))),
+      e("p",{style:{color:C.src,fontSize:12,marginTop:24}},
+        data.firstDate?"Counting since "+fmtDay(data.firstDate)+". ":"",
+        data.folded?data.folded+" new batches folded in just now. ":"",
+        data.more?"More batches are still waiting — reload to fold the rest.":"")));
+}
+
 function App(){
   const concertId=new URLSearchParams(location.search).get("concert");
   const songParam=new URLSearchParams(location.search).get("song");
@@ -4973,8 +4868,6 @@ function App(){
   const [error,setError]=useState("");
   const [bandVersion,setBandVersion]=useState(0); // bump to re-evaluate band mode
   const onBandChange=()=>setBandVersion(v=>v+1);
-  // Access gate: shared concert links stay open; everything else needs a code.
-  const [access,setAccess]=useState(hasAppAccess());
   async function load(){
     setLoading(true);setError("");
     try{
@@ -4982,10 +4875,12 @@ function App(){
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||"Could not load");
       setSongs(d.songs||[]);
+      usage.setCatalog(d.songs||[]);
     }catch(err){setError("Couldn't load the library. "+err.message);}
     finally{setLoading(false);}
   }
   useEffect(()=>{ if(!concertId) load(); },[]);
+  useEffect(()=>{ usage.event("tab",{tab}); },[tab]);
 
   // Shared concert link: skip the tabbed UI, go straight to playback.
   if(concertId)return e("div",null,
@@ -4997,9 +4892,6 @@ function App(){
       "Conference as a Concert · Y-Mountain Music Co."),
   );
 
-  // No access yet: show the request-access gate instead of the app.
-  if(!access)return e(AccessGate,{onUnlocked:()=>setAccess(true)});
-
   return e("div",null,
     e(Header,{tab,setTab,bandVersion}),
     tab==="library"&&e(Library,{songs,loading,error,onReload:load,focusId:songParam}),
@@ -5008,7 +4900,7 @@ function App(){
     tab==="testimonies"&&e(Testimonies,{songs}),
     tab==="games"&&e(GamesTab,{songs,loading}),
     tab==="inbox"&&e(SuggestionsInbox),
-    tab==="requests"&&e(AccessInbox),
+    tab==="stats"&&e(StatsTab,{songs}),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();},onBandChange}),
     e(ShuffleBar),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
