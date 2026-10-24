@@ -3,7 +3,7 @@
 // Two actions (no large file ever passes through this function):
 //   { action: "sign", filename, contentType }  -> { uploadUrl, publicUrl }
 //   { action: "save", song:{...} }             -> appends the song to catalog.json
-//   { action: "links", id, youtube?, facebook? } -> records where a video was posted
+//   { action: "links", id, youtube?, facebook?, youtubeShort?, facebookReel? } -> records where a video / Reel was posted
 // Back-compat: a body with { song } and no action is treated as "save".
 const { getJSON, putJSON, presignPut, CATALOG_KEY, json } = require("./_r2");
 
@@ -74,6 +74,7 @@ exports.handler = async (event) => {
       youtube: clip(song.youtube, 200),
       audioUrl: clip(song.audioUrl, 500),
       videoUrl: clip(song.videoUrl, 500),
+      reelUrl: clip(song.reelUrl, 500),
       previewStart: Math.max(0, Math.min(3600, parseInt(song.previewStart, 10) || 0)),
       previewEnd: Math.max(0, Math.min(3600, parseInt(song.previewEnd, 10) || 0)),
       duration: Math.max(0, Math.min(3600, parseInt(song.duration, 10) || 0)),
@@ -110,6 +111,8 @@ exports.handler = async (event) => {
       const next = { ...songs[i], updatedAt: new Date().toISOString() };
       if (body.youtube !== undefined) next.youtube = clip(body.youtube, 200);
       if (body.facebook !== undefined) next.facebook = clip(body.facebook, 300);
+      if (body.youtubeShort !== undefined) next.youtubeShort = clip(body.youtubeShort, 200);
+      if (body.facebookReel !== undefined) next.facebookReel = clip(body.facebookReel, 300);
       songs[i] = next;
       catalog.songs = songs;
       await putJSON(CATALOG_KEY, catalog);
@@ -142,6 +145,7 @@ exports.handler = async (event) => {
         youtube: clip(song.youtube, 200),
         audioUrl: clip(song.audioUrl, 500) || cur.audioUrl,
         videoUrl: song.videoUrl === "" ? "" : (clip(song.videoUrl, 500) || cur.videoUrl || ""),
+        reelUrl: song.reelUrl === "" ? "" : (clip(song.reelUrl, 500) || cur.reelUrl || ""),
         previewStart: Math.max(0, Math.min(3600, parseInt(song.previewStart, 10) || 0)),
       previewEnd: Math.max(0, Math.min(3600, parseInt(song.previewEnd, 10) || 0)),
         duration: Math.max(0, Math.min(3600, parseInt(song.duration, 10) || 0)),

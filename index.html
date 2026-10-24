@@ -1265,7 +1265,7 @@ function ShareButton({title,text,url,label,small}){
    buttons, the MP4 download, buttons that open each site's composer, and two
    paste-back boxes so the app remembers where it was posted (the YouTube
    link also flips the player to the embed, which saves storage bandwidth). */
-const needsPost=s=>!!(s.videoUrl&&(!ytId(s.youtube)||!s.facebook));
+const needsPost=s=>!!((s.videoUrl&&(!ytId(s.youtube)||!s.facebook))||(s.reelUrl&&!s.facebookReel));
 function publishTexts(song){
   const appUrl=location.origin+location.pathname;
   const songUrl=appUrl+"?song="+encodeURIComponent(song.id);
@@ -1445,6 +1445,109 @@ function LoginVault(){
           data&&e("button",{onClick:()=>{setDraft(null);setState("view");setMsg("");},style:{...small,border:0,color:C.src}},"Cancel")))));
 }
 
+/* The vertical Reel / Short made in the Studio (song.reelUrl): watch it,
+   download it, post it straight to the Facebook Page as a Reel (same Page
+   connection as the Daily posts: three short server steps), and the YouTube
+   Shorts title / description to paste. YouTube has no direct post here: that
+   needs a Google sign-in set up for the channel. */
+function ReelKit({song,texts,onEdited,btn,head}){
+  const pw=sessionStorage.getItem("cac_pw")||"";
+  const [facts,setFacts]=useState(null);
+  const [dl,setDl]=useState("");
+  const [caption,setCaption]=useState(texts.facebook);
+  const [arm,setArm]=useState(false);
+  const [busy,setBusy]=useState("");
+  const [err,setErr]=useState("");
+  const [posted,setPosted]=useState(song.facebookReel||"");
+  const [status,setStatus]=useState("");
+  useEffect(()=>{
+    const v=document.createElement("video");v.preload="metadata";v.muted=true;
+    v.onloadedmetadata=()=>setFacts({dur:v.duration,w:v.videoWidth,h:v.videoHeight});
+    v.src=song.reelUrl;
+  },[song.reelUrl]);
+  const tooLong=facts&&facts.dur>90;
+  const shortsTitle=(texts.title.replace(/ \| Conference as a Concert$/,"")+" #Shorts").slice(0,100);
+  const shortsDesc=texts.description+" #Shorts";
+  async function admin(body){
+    const r=await fetch(`${API}/dailypost-admin`,{method:"POST",
+      headers:{"Content-Type":"application/json","x-upload-password":pw},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||("HTTP "+r.status));
+    return d;
+  }
+  async function download(){
+    setDl("working");
+    try{
+      const r=await fetch(song.reelUrl);if(!r.ok)throw new Error("HTTP "+r.status);
+      const url=URL.createObjectURL(await r.blob());
+      const a=document.createElement("a");a.href=url;
+      a.download=(song.title||"song").replace(/[^A-Za-z0-9 _-]+/g,"").trim().replace(/\s+/g,"-")+"-reel.mp4";
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);setDl("done");
+    }catch(_){window.open(song.reelUrl,"_blank","noopener");setDl("fallback");}
+    setTimeout(()=>setDl(""),4000);
+  }
+  async function postReel(){
+    if(!arm){setArm(true);setTimeout(()=>setArm(false),6000);return;}
+    setArm(false);setErr("");setStatus("");
+    try{
+      setBusy("Starting the Reel on Facebook…");
+      const s=await admin({action:"reelStart",songId:song.id});
+      setBusy("Facebook is fetching the video…");
+      await admin({action:"reelUpload",songId:song.id,videoId:s.videoId});
+      setBusy("Publishing…");
+      const f=await admin({action:"reelFinish",songId:song.id,videoId:s.videoId,text:caption});
+      setPosted(f.url);setBusy("");
+      setStatus("Posted. Facebook takes a minute or two to process it before it shows on the Page.");
+      onEdited&&onEdited();
+      for(let k=0;k<6;k++){
+        await new Promise(r=>setTimeout(r,10000));
+        try{
+          const st=await admin({action:"reelStatus",videoId:s.videoId});
+          if(st.url)setPosted(st.url);
+          setStatus("Facebook: "+(st.videoStatus||"processing")+(st.publishing?" · publishing "+st.publishing:""));
+          if(st.videoStatus==="ready"||st.publishing==="complete")break;
+        }catch(_){break;}
+      }
+    }catch(e2){setBusy("");setErr(e2.message);}
+  }
+  const sub={fontWeight:"bold",color:C.text,fontSize:14,margin:"14px 0 4px"};
+  return e("div",null,
+    head,
+    e("div",{style:{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-start"}},
+      e("video",{src:song.reelUrl,controls:true,playsInline:true,preload:"metadata",
+        style:{width:160,aspectRatio:"9 / 16",borderRadius:10,background:"#000",flexShrink:0}}),
+      e("div",{style:{flex:"1 1 280px",minWidth:0}},
+        e("div",{style:{fontSize:13,color:C.src,lineHeight:1.55}},
+          facts&&facts.dur?"This Reel: "+Math.round(facts.dur)+" s · "+facts.w+"×"+facts.h+". ":"",
+          tooLong?"Longer than 90 seconds, so Facebook won't take it as a Reel (YouTube Shorts allow up to 3 minutes).":
+            "Vertical and short: a Facebook Reel and a YouTube Short."),
+        e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginTop:8}},
+          e("button",{onClick:download,disabled:dl==="working",style:{...btn,borderColor:C.gold,color:C.gold}},
+            dl==="working"?"Preparing download…":"⤓ Download the Reel"),
+          dl==="done"&&e("span",{style:{fontSize:12.5,color:C.src}},"Saved to your downloads."),
+          dl==="fallback"&&e("span",{style:{fontSize:12.5,color:C.src}},"Opened in a new tab — use Save video there.")),
+
+        e("div",{style:sub},"Facebook Reel — post it from here"),
+        e("textarea",{value:caption,onChange:ev=>setCaption(ev.target.value),rows:6,
+          style:{width:"100%",padding:"9px 11px",fontSize:13,lineHeight:1.45,borderRadius:8,
+            border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,resize:"vertical",fontFamily:"Georgia,serif"}}),
+        e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginTop:8}},
+          e("button",{onClick:postReel,disabled:!!busy||tooLong,
+            style:{...btn,background:arm?"#E6BC5C":C.gold,borderColor:C.gold,color:"#0A1628",fontWeight:"bold"}},
+            busy?busy:arm?"Tap again to post publicly":(posted?"Post the Reel again":"📲 Post the Reel to the Facebook Page")),
+          posted&&e("a",{href:posted,target:"_blank",rel:"noopener",style:{color:C.blue,fontSize:13}},"Posted ✓ open ↗")),
+        status&&e("div",{style:{fontSize:12.5,color:C.src,marginTop:6}},status),
+        err&&e("div",{style:{fontSize:12.5,color:"#E66A5C",marginTop:6,lineHeight:1.5}},err,
+          /not connected|token|permission/i.test(err)?" — check the Facebook connection on the Daily posts tab.":""),
+
+        e("div",{style:sub},"YouTube Short"),
+        e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
+          e("a",{href:"https://www.youtube.com/upload",target:"_blank",rel:"noopener",style:btn},"Open YouTube upload ↗")),
+        e("div",{style:{fontSize:12.5,color:C.src,marginTop:6}},"Upload the Reel file on the ConferenceAsAConcert channel; YouTube files a vertical video under 3 minutes as a Short."),
+        e(CopyBox,{label:"Shorts title ("+shortsTitle.length+"/100)",text:shortsTitle,rows:2}),
+        e(CopyBox,{label:"Shorts description",text:shortsDesc,rows:6}))));
+}
 function PublishKit({song,onEdited}){
   const [open,setOpen]=useState(false);
   const [withLyrics,setWithLyrics]=useState(false);
@@ -1452,6 +1555,8 @@ function PublishKit({song,onEdited}){
   const [dl,setDl]=useState("");       // "" | "working" | "done" | "fallback"
   const [yt,setYt]=useState(song.youtube||"");
   const [fb,setFb]=useState(song.facebook||"");
+  const [ys,setYs]=useState(song.youtubeShort||"");
+  const [fr,setFr]=useState(song.facebookReel||"");
   const [save,setSave]=useState("idle");
   const [msg,setMsg]=useState("");
   const texts=useMemo(()=>publishTexts(song),[song]);
@@ -1485,14 +1590,16 @@ function PublishKit({song,onEdited}){
     setTimeout(()=>setDl(""),4000);
   }
   async function saveLinks(){
-    const y=yt.trim(),f=fb.trim();
+    const y=yt.trim(),f=fb.trim(),y2=ys.trim(),f2=fr.trim();
     if(y&&!ytId(y)){setSave("error");setMsg("That doesn't look like a YouTube video link.");return;}
-    if(f&&!/^https?:\/\//i.test(f)){setSave("error");setMsg("The Facebook link should start with https://");return;}
+    if(y2&&!ytId(y2)){setSave("error");setMsg("That doesn't look like a YouTube Short link.");return;}
+    if((f&&!/^https?:\/\//i.test(f))||(f2&&!/^https?:\/\//i.test(f2))){setSave("error");setMsg("The Facebook link should start with https://");return;}
     setSave("saving");setMsg("");
     try{
       const r=await fetch(`${API}/upload`,{method:"POST",
         headers:{"Content-Type":"application/json","x-upload-password":pw},
-        body:JSON.stringify({action:"links",id:song.id,youtube:y,facebook:f})});
+        body:JSON.stringify({action:"links",id:song.id,youtube:y,facebook:f,
+          ...(song.reelUrl?{youtubeShort:y2,facebookReel:f2}:{})})});
       const d=await r.json();if(!r.ok)throw new Error(d.error||"Could not save");
       setSave("saved");setMsg("Saved — the library will refresh.");onEdited&&onEdited();
     }catch(err){setSave("error");setMsg(err.message);}
@@ -1515,11 +1622,12 @@ function PublishKit({song,onEdited}){
       e("span",null,open?"▾":"▸"),
       e("span",null,"📣 Publish kit"),
       e("span",{style:{marginLeft:"auto",fontWeight:"normal",fontSize:12.5,color:C.src}},
-        "YouTube "+(ytOk?"✓":"–")+" · Facebook "+(fbOk?"✓":"–"))),
+        (song.videoUrl?"YouTube "+(ytOk?"✓":"–")+" · Facebook "+(fbOk?"✓":"–"):"")+
+        (song.reelUrl?(song.videoUrl?" · ":"")+"Reel "+(song.facebookReel?"✓":"–"):""))),
     open&&e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,
         padding:"14px 18px 18px",marginTop:8}},
       e(LoginVault),
-      e("div",{style:{fontSize:13,color:C.src,lineHeight:1.55,marginTop:10}},
+      song.videoUrl&&e("div",{style:{fontSize:13,color:C.src,lineHeight:1.55,marginTop:10}},
         facts&&facts.dur?e("span",null,"This video: "+fmtClip(facts.dur)+
           (facts.w?" · "+facts.w+"×"+facts.h+(vertical?" (vertical)":" (landscape)"):"")+
           (facts.mb?" · "+facts.mb.toFixed(0)+" MB":"")+". "):(facts&&facts.failed?"":"Reading the video's length and shape… "),
@@ -1527,6 +1635,7 @@ function PublishKit({song,onEdited}){
           ?"Vertical and under 3 minutes, so YouTube will file it as a Short automatically."
           :"YouTube will treat it as a regular upload."):null),
 
+      song.videoUrl&&e(React.Fragment,null,
       step(1,"Get the file"),
       e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}},
         e("button",{onClick:download,disabled:dl==="working",style:{...btn,borderColor:C.gold,color:C.gold}},
@@ -1547,18 +1656,26 @@ function PublishKit({song,onEdited}){
       step(3,"Facebook"),
       e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
         e("a",{href:"https://www.facebook.com/",target:"_blank",rel:"noopener",style:btn},"Open Facebook ↗")),
-      e(CopyBox,{label:"Post text (add the video file to the post)",text:texts.facebook,rows:7}),
+      e(CopyBox,{label:"Post text (add the video file to the post)",text:texts.facebook,rows:7})),
 
-      step(4,"Paste the links back"),
+      song.reelUrl&&e(ReelKit,{song,texts,onEdited,btn,head:step(song.videoUrl?4:1,"📱 Reel / Short (vertical)")}),
+
+      step((song.videoUrl?4:1)+(song.reelUrl?1:0),"Paste the links back"),
       e("p",{style:{fontSize:12.5,color:C.src,margin:"0 0 10px",lineHeight:1.5}},
         "Once posted, paste each link here. The YouTube link makes the app play the YouTube version; both links mark this song as posted."),
       e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
-        e("div",{style:{flex:"1 1 240px"}},
+        song.videoUrl&&e("div",{style:{flex:"1 1 240px"}},
           e("label",{style:{display:"block",fontSize:12.5,color:C.src,marginBottom:4}},"YouTube link"),
           e("input",{style:field,value:yt,onChange:ev=>setYt(ev.target.value),placeholder:"https://youtu.be/…"})),
-        e("div",{style:{flex:"1 1 240px"}},
+        song.videoUrl&&e("div",{style:{flex:"1 1 240px"}},
           e("label",{style:{display:"block",fontSize:12.5,color:C.src,marginBottom:4}},"Facebook post link"),
-          e("input",{style:field,value:fb,onChange:ev=>setFb(ev.target.value),placeholder:"https://www.facebook.com/…"}))),
+          e("input",{style:field,value:fb,onChange:ev=>setFb(ev.target.value),placeholder:"https://www.facebook.com/…"})),
+        song.reelUrl&&e("div",{style:{flex:"1 1 240px"}},
+          e("label",{style:{display:"block",fontSize:12.5,color:C.src,marginBottom:4}},"YouTube Short link"),
+          e("input",{style:field,value:ys,onChange:ev=>setYs(ev.target.value),placeholder:"https://youtube.com/shorts/…"})),
+        song.reelUrl&&e("div",{style:{flex:"1 1 240px"}},
+          e("label",{style:{display:"block",fontSize:12.5,color:C.src,marginBottom:4}},"Facebook Reel link"),
+          e("input",{style:field,value:fr,onChange:ev=>setFr(ev.target.value),placeholder:"filled in when posted from here"}))),
       e("div",{style:{display:"flex",gap:10,alignItems:"center",marginTop:10,flexWrap:"wrap"}},
         e("button",{onClick:saveLinks,disabled:save==="saving",style:{...btn,background:C.gold,borderColor:C.gold,
           color:"#0A1628",fontWeight:"bold"}},save==="saving"?"Saving…":"Save links"),
@@ -1583,10 +1700,11 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
             e("span",{style:{fontSize:19,fontWeight:"bold",color:C.gold}},song.title),
             e("span",{style:{fontSize:11,color:"#fff",background:badgeColor,
               padding:"2px 9px",borderRadius:12}},badge),
-            canEdit&&song.videoUrl&&e("span",{title:"Publish status",style:{fontSize:11,
+            canEdit&&(song.videoUrl||song.reelUrl)&&e("span",{title:"Publish status",style:{fontSize:11,
               color:needsPost(song)?C.gold:C.src,border:`1px solid ${needsPost(song)?C.gold:C.line}`,
               padding:"1px 8px",borderRadius:12}},
-              "📣 YT "+(ytId(song.youtube)?"✓":"–")+" · FB "+(song.facebook?"✓":"–"))),
+              "📣 "+(song.videoUrl?"YT "+(ytId(song.youtube)?"✓":"–")+" · FB "+(song.facebook?"✓":"–"):"")+
+                (song.reelUrl?(song.videoUrl?" · ":"")+"Reel "+(song.facebookReel?"✓":"–"):""))),
           song.talk&&e("div",{style:{fontSize:14,color:C.text,marginTop:5,fontStyle:"italic"}},
             "from “"+song.talk+"”"+(song.speaker&&song.speaker!=="—"?" · "+song.speaker:"")),
           song.blurb&&e("div",{style:{fontSize:13.5,color:C.src,marginTop:6,lineHeight:1.5}},song.blurb)),
@@ -1595,7 +1713,7 @@ function SongCard({song,open,onToggle,canEdit,onEdited}){
       e(FavStar,{song,style:{margin:"12px 10px 0 4px"}})),
     open&&!editing&&e("div",null,
       e(Player,{song}),
-      canEdit&&song.videoUrl&&e(PublishKit,{song,onEdited}),
+      canEdit&&(song.videoUrl||song.reelUrl)&&e(PublishKit,{song,onEdited}),
       canEdit&&e("div",{style:{padding:"0 20px 16px"}},
         e("button",{onClick:()=>setEditing(true),
           style:{padding:"7px 16px",fontSize:13,borderRadius:8,
@@ -5248,8 +5366,8 @@ function DailyPostsTab(){
           st.log.map((l,i)=>e("div",{key:i,style:{display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap",
               background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,padding:"8px 12px",fontSize:13.5}},
             e("span",{style:{color:C.src,whiteSpace:"nowrap"}},l.date),
-            e("span",{style:{color:l.status==="posted"?"#7FD89A":l.status==="error"?"#E66A5C":C.src,fontWeight:"bold"}},
-              l.status==="posted"?"Posted":l.status==="error"?"Failed":"Nothing to post"),
+            e("span",{style:{color:(l.status==="posted"||l.status==="reel")?"#7FD89A":l.status==="error"?"#E66A5C":C.src,fontWeight:"bold"}},
+              l.status==="posted"?"Posted":l.status==="reel"?"Reel posted":l.status==="error"?"Failed":"Nothing to post"),
             e("span",{style:{color:C.text,flex:1}},l.title||l.note||""),
             l.url&&e("a",{href:l.url,target:"_blank",rel:"noopener",style:{color:C.blue}},"open ↗"),
             l.error&&e("span",{style:{color:"#E66A5C",width:"100%",fontSize:12.5}},l.error))))));

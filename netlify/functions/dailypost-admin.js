@@ -5,6 +5,11 @@
 //   { action:"saveDraft", songId, text } -> keep the band's own wording
 //   { action:"skip", songId, undo? }     -> leave a song out of the queue (or put it back)
 //   { action:"postNow", songId }         -> post that song to Facebook right now
+//   Reels (the Studio's vertical video, song.reelUrl), three short steps from the Publish kit:
+//   { action:"reelStart", songId }                  -> { videoId }
+//   { action:"reelUpload", songId, videoId }        -> Facebook pulls the Reel file from its URL
+//   { action:"reelFinish", songId, videoId, text }  -> published; saves song.facebookReel
+//   { action:"reelStatus", videoId }                -> processing / publishing status
 const { json } = require("./_r2");
 const dp = require("./_dailypost");
 
@@ -71,6 +76,36 @@ exports.handler = async (event) => {
       if (!songId) return json(400, { error: "Need songId" });
       const result = await dp.runOnce({ force: true, songId });
       return json(result.error ? 502 : 200, result);
+    }
+    if (action === "reelStart" || action === "reelUpload" || action === "reelFinish") {
+      const songId = clip(body.songId, 120);
+      const songs = await dp.loadSongs();
+      const song = songs.find((s) => s.id === songId);
+      if (!song) return json(404, { error: "Song not found" });
+      if (!song.reelUrl) return json(400, { error: "This song has no Reel yet - publish it from the Studio with the Reel" });
+      if (action === "reelStart") return json(200, await dp.fbReelStart());
+      const videoId = clip(body.videoId, 60);
+      if (!/^[0-9]+$/.test(videoId)) return json(400, { error: "Need the videoId from reelStart" });
+      if (action === "reelUpload") return json(200, await dp.fbReelUpload(videoId, song.reelUrl));
+      const text = clip(body.text, 2200);
+      const posted = await dp.fbReelFinish(videoId, text);
+      // remember it on the song (Publish kit check mark) and in the panel log;
+      // status "reel" (not "posted") so the daily video queue is unaffected
+      const { getJSON, putJSON, CATALOG_KEY } = require("./_r2");
+      const catalog = await getJSON(CATALOG_KEY, { songs: [] });
+      const i = (catalog.songs || []).findIndex((s) => s.id === songId);
+      const at = new Date().toISOString();
+      if (i >= 0) { catalog.songs[i].facebookReel = posted.url; catalog.songs[i].updatedAt = at; await putJSON(CATALOG_KEY, catalog); }
+      const state = await dp.loadState();
+      state.log.unshift({ date: dp.localDate(), at, status: "reel", songId, title: song.title, fbId: posted.id, url: posted.url, text });
+      state.log = state.log.slice(0, 200);
+      await dp.saveState(state);
+      return json(200, { ok: true, ...posted });
+    }
+    if (action === "reelStatus") {
+      const videoId = clip(body.videoId, 60);
+      if (!/^[0-9]+$/.test(videoId)) return json(400, { error: "Need a videoId" });
+      return json(200, await dp.fbReelStatus(videoId));
     }
     return json(400, { error: "Unknown action" });
   } catch (err) {

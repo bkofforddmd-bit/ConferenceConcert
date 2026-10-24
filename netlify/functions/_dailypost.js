@@ -197,6 +197,55 @@ async function fbPostVideo(song, description) {
   return { id: d.id, url: `https://www.facebook.com/${pg.pageId}/videos/${d.id}/` };
 }
 
+// ---------- Facebook Reels (the vertical 9:16 video from the Studio) ----------
+// Meta's Reels publishing flow, in three short calls so each request stays
+// well inside the function time limit: start (get a video id), upload (Facebook
+// pulls the file from its public URL itself), finish (publish with the caption).
+// Same Page token and permissions as the daily posts (pages_manage_posts).
+const RUPLOAD = "https://rupload.facebook.com/video-upload/v21.0";
+async function fbForm(url, params) {
+  const r = await fetch(url, { method: "POST", body: new URLSearchParams(params) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.error) throw new Error("Facebook: " + (d.error ? d.error.message : "HTTP " + r.status));
+  return d;
+}
+async function page() {
+  const pg = await resolvePage();
+  if (!pg.ok) throw new Error("Facebook is not connected: " + pg.error);
+  return pg;
+}
+async function fbReelStart() {
+  const pg = await page();
+  const d = await fbForm(`${GRAPH}/${pg.pageId}/video_reels`, { upload_phase: "start", access_token: pg.token });
+  if (!d.video_id) throw new Error("Facebook did not return a video id");
+  return { videoId: String(d.video_id) };
+}
+async function fbReelUpload(videoId, fileUrl) {
+  const pg = await page();
+  const r = await fetch(`${RUPLOAD}/${encodeURIComponent(videoId)}`, { method: "POST",
+    headers: { Authorization: "OAuth " + pg.token, file_url: fileUrl } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.error || d.success === false) throw new Error("Facebook upload: " + (d.error ? (d.error.message || JSON.stringify(d.error)) : d.debug_info ? d.debug_info.message : "HTTP " + r.status));
+  return { ok: true };
+}
+async function fbReelFinish(videoId, description) {
+  const pg = await page();
+  const d = await fbForm(`${GRAPH}/${pg.pageId}/video_reels`, { upload_phase: "finish", video_id: videoId,
+    video_state: "PUBLISHED", description, access_token: pg.token });
+  if (d.success === false) throw new Error("Facebook did not accept the Reel");
+  return { id: videoId, url: `https://www.facebook.com/reel/${videoId}` };
+}
+async function fbReelStatus(videoId) {
+  const pg = await page();
+  const r = await fetch(`${GRAPH}/${encodeURIComponent(videoId)}?fields=status,permalink_url&access_token=${encodeURIComponent(pg.token)}`);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.error) throw new Error("Facebook: " + (d.error ? d.error.message : "HTTP " + r.status));
+  const st = d.status || {};
+  return { videoStatus: st.video_status || "", processing: st.processing_phase && st.processing_phase.status || "",
+    publishing: st.publishing_phase && st.publishing_phase.status || "",
+    url: d.permalink_url ? (/^https?:/.test(d.permalink_url) ? d.permalink_url : "https://www.facebook.com" + d.permalink_url) : "" };
+}
+
 // ---------- one run ----------
 // opts: { force (ignore enabled + once-a-day), songId (post this one), deps (test doubles) }
 async function runOnce(opts = {}) {
@@ -241,4 +290,5 @@ async function runOnce(opts = {}) {
 }
 
 module.exports = { STATE_KEY, APP_URL, localDate, loadState, saveState, loadSongs, confOf, buildQueue,
-  talkText, draftPost, composePost, resolvePage, fbCheck, fbPostVideo, runOnce };
+  talkText, draftPost, composePost, resolvePage, fbCheck, fbPostVideo, runOnce,
+  fbReelStart, fbReelUpload, fbReelFinish, fbReelStatus };
