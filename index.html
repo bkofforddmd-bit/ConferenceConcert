@@ -152,6 +152,54 @@ function ytId(url){if(!url)return null;
   const m=url.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);return m?m[1]:null;}
 const PREVIEW_SECONDS=20;
 
+/* The song's preview window. The band's start/end win when set; otherwise,
+   when the lyrics are synced, it is the FIRST CHORUS: under the first
+   [Chorus] label, or else the stanza whose words repeat most. Without either
+   it is PREVIEW_SECONDS from the start. The Studio sends the chorus window
+   with every song it publishes. */
+function chorusSpan(lyrics){
+  const lines=(lyrics||"").split("\n");
+  const isLabel=l=>/^\s*\[[^\]]+\]\s*$/.test(l);
+  const sung=i=>lines[i]!=null&&lines[i].trim()&&!isLabel(lines[i]);
+  for(let i=0;i<lines.length;i++){
+    const m=/^\s*\[\s*([^\]]*)\]\s*$/.exec(lines[i]);
+    if(!m||!/^(?:(?:first|1st|main|final|last)\s+)?chorus\b/i.test(m[1].trim()))continue;
+    let a=-1,b=-1;
+    for(let j=i+1;j<lines.length&&!isLabel(lines[j]);j++)if(sung(j)){if(a<0)a=j;b=j;}
+    if(a>=0)return {first:a,last:b};
+  }
+  const st=[];let cur=null;
+  lines.forEach((ln,i)=>{
+    if(!ln.trim()||isLabel(ln)){cur=null;return;}
+    if(!cur){cur={first:i,last:i,w:[]};st.push(cur);}
+    cur.last=i;cur.w.push(ln.toLowerCase().replace(/[^a-z0-9 ]+/g,"").replace(/\s+/g," ").trim());
+  });
+  const key=s=>s.w.join(" "),n={};
+  st.forEach(s=>{if(s.w.length>=2)n[key(s)]=(n[key(s)]||0)+1;});
+  const max=Math.max(0,...Object.values(n));
+  if(max<2)return null;
+  const h=st.find(s=>s.w.length>=2&&n[key(s)]===max);
+  return h?{first:h.first,last:h.last}:null;
+}
+function previewRange(song){
+  const s=Math.max(0,parseFloat(song&&song.previewStart)||0);
+  const e=parseFloat(song&&song.previewEnd)||0;
+  if(e>s+2)return {start:s,end:Math.min(e,s+90)};
+  if(s>0)return {start:s,end:s+PREVIEW_SECONDS};
+  const tms=song?lineTimings(song.lyrics,song.lyricTimings):null;
+  const sp=tms?chorusSpan(song.lyrics):null;
+  if(sp){
+    const lines=song.lyrics.split("\n");
+    const st=Math.max(0,tms[sp.first]-0.4);
+    let en=null;
+    for(let i=sp.last+1;i<lines.length&&en==null;i++)
+      if(lines[i].trim()&&!/^\s*\[[^\]]+\]\s*$/.test(lines[i])&&tms[i]>tms[sp.first])en=tms[i]-0.3;
+    if(en==null)en=tms[sp.last]+5;
+    if(en>st+3)return {start:st,end:Math.min(en,st+90)};
+  }
+  return {start:0,end:PREVIEW_SECONDS};
+}
+
 /* Suggestion-form options for genre and mood pickers (free-text style stays open). */
 const GENRES=["","Acoustic / Singer-songwriter","Pop","Folk","Country","Jazz / Swing",
   "Soul / R&B","Gospel / Worship","Hymn / Sacred","Ballad","Rock","Indie",
@@ -309,11 +357,11 @@ function playPreview(song,onEnd){
   stopPreview();
   shufflePlayer.stop(); // a preview takes over from shuffle play
   previewOnEnd=onEnd||null;
-  const start=Math.max(0,parseInt(song.previewStart,10)||0);
+  const range=previewRange(song),start=range.start;
   previewAudio.src=song.audioUrl;
   const begin=()=>{try{previewAudio.currentTime=start;}catch(_){}
     previewAudio.play().catch(()=>{});
-    previewStopTimer=setTimeout(stopPreview,PREVIEW_SECONDS*1000);};
+    previewStopTimer=setTimeout(stopPreview,Math.max(3,range.end-range.start)*1000);};
   if(previewAudio.readyState>=1)begin();
   else previewAudio.addEventListener("loadedmetadata",begin,{once:true});
 }
@@ -1899,6 +1947,7 @@ function SongEditor({song,onDone}){
     session:song.session||"",theme:song.theme||"",style:song.style||"",
     talkUrl:song.talkUrl||"",youtube:song.youtube||"",
     previewStart:song.previewStart?String(song.previewStart):"",
+    previewEnd:song.previewEnd?String(song.previewEnd):"",
     duration:song.duration?String(song.duration):"",
     lyricsDelay:song.lyricsDelay==null?"":String(song.lyricsDelay),
     lyricsEnd:song.lyricsEnd==null?"":String(song.lyricsEnd),
@@ -1961,7 +2010,9 @@ function SongEditor({song,onDone}){
           e("input",{style:field,value:f.style,onChange:up("style")}))),
       e("div",{style:{display:"flex",gap:12,flexWrap:"wrap"}},
         e("div",half,e("label",{style:lbl},"Preview start (sec)"),
-          e("input",{type:"number",min:"0",style:field,value:f.previewStart,onChange:up("previewStart")})),
+          e("input",{type:"number",min:"0",style:field,value:f.previewStart,onChange:up("previewStart"),placeholder:"blank = the first chorus"})),
+        e("div",half,e("label",{style:lbl},"Preview end (sec)"),
+          e("input",{type:"number",min:"0",style:field,value:f.previewEnd,onChange:up("previewEnd"),placeholder:"blank = end of that chorus"})),
         e("div",half,e("label",{style:lbl},"Length (sec)"),
           e("input",{type:"number",min:"0",style:field,value:f.duration,onChange:up("duration")})),
         e("div",half,e("label",{style:lbl},"Lyrics delay (sec)"),
@@ -2817,7 +2868,7 @@ function Band({onAdded,onBandChange}){
   const [file,setFile]=useState(null);
   const [drag,setDrag]=useState(false);
   const [s,setS]=useState({title:"",talk:"",speaker:"",session:"",theme:"",
-    style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",lyricsDelay:"",lyricsEnd:"",blurb:""});
+    style:"",talkUrl:"",youtube:"",previewStart:"",previewEnd:"",duration:"",lyrics:"",lyricsDelay:"",lyricsEnd:"",blurb:""});
   const [state,setState]=useState("idle");
   const [msg,setMsg]=useState("");
   const [gdocUrl,setGdocUrl]=useState("");
@@ -2945,7 +2996,7 @@ function Band({onAdded,onBandChange}){
       sessionStorage.setItem("cac_pw",pw);
       setBandOn(true);onBandChange&&onBandChange();
       setState("done");setMsg("");setFile(null);
-      setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",duration:"",lyrics:"",lyricsDelay:"",lyricsEnd:"",blurb:""});
+      setS({title:"",talk:"",speaker:"",session:"",theme:"",style:"",talkUrl:"",youtube:"",previewStart:"",previewEnd:"",duration:"",lyrics:"",lyricsDelay:"",lyricsEnd:"",blurb:""});
       setGdocUrl("");setGdocState("idle");setGdocMsg("");setGdocPreview("");setProjMsg("");
       onAdded&&onAdded(d.entry);
     }catch(err){setState("error");setMsg(err.message);}
@@ -3037,7 +3088,11 @@ function Band({onAdded,onBandChange}){
         e("div",{style:{flex:"1 1 220px"}},
           e("label",{style:lbl,htmlFor:"b-prev"},"Preview start (seconds into the song)"),
           e("input",{id:"b-prev",type:"number",min:"0",style:field,value:s.previewStart,
-            onChange:up("previewStart"),placeholder:"0 — e.g. 45 to start at the chorus"})),
+            onChange:up("previewStart"),placeholder:"blank = the first chorus (synced lyrics)"})),
+        e("div",{style:{flex:"1 1 200px"}},
+          e("label",{style:lbl,htmlFor:"b-prev-end"},"Preview end (seconds)"),
+          e("input",{id:"b-prev-end",type:"number",min:"0",style:field,value:s.previewEnd,
+            onChange:up("previewEnd"),placeholder:"blank = end of that chorus"})),
         e("div",{style:{flex:"1 1 200px"}},
           e("label",{style:lbl,htmlFor:"b-dur"},"Length (seconds, for video-only songs)"),
           e("input",{id:"b-dur",type:"number",min:"0",style:field,value:s.duration,
@@ -4099,7 +4154,7 @@ function MusicalChairs({songs,onBack}){
     a.src=song.audioUrl;
     // Play IMMEDIATELY (inside the tap) — play() also starts the load; the
     // seek to previewStart lands as soon as the file's metadata arrives.
-    const seek=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
+    const seek=()=>{const st=previewRange(song).start;
       try{a.currentTime=st;}catch(_){}};
     if(a.readyState>=1)seek();
     else a.addEventListener("loadedmetadata",seek,{once:true});
@@ -4227,7 +4282,7 @@ function VanishingChorus({songs,onBack}){
     if(loadedRef.current!==s.id){a.src=s.audioUrl;loadedRef.current=s.id;}
     const tms=lineTimings(s.lyrics,s.lyricTimings);
     const startT=(tms&&st)?Math.max(0,(tms[st.start]||0)-0.4)
-      :Math.max(0,parseInt(s.previewStart,10)||0);
+      :previewRange(s).start;
     const seek=()=>{try{a.currentTime=startT;}catch(_){}};
     if(a.readyState>=1)seek();
     else a.addEventListener("loadedmetadata",seek,{once:true});
@@ -4405,7 +4460,7 @@ function ConcertBingo({songs,onBack}){
     const a=audioRef.current;if(!a||!song)return;
     clearTimeout(clipTimer.current);
     a.src=song.audioUrl;
-    const seek=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
+    const seek=()=>{const st=previewRange(song).start;
       try{a.currentTime=st;}catch(_){}};
     if(a.readyState>=1)seek();
     else a.addEventListener("loadedmetadata",seek,{once:true});
@@ -4517,7 +4572,7 @@ function ConcertMemory({songs,onBack}){
     const a=audioRef.current;if(!a||!song)return;
     clearTimeout(clipTimer.current);
     a.src=song.audioUrl;
-    const seek=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
+    const seek=()=>{const st=previewRange(song).start;
       try{a.currentTime=st;}catch(_){}};
     if(a.readyState>=1)seek();
     else a.addEventListener("loadedmetadata",seek,{once:true});
@@ -4866,7 +4921,7 @@ function ConcertTimeline({songs,onBack}){
     const a=audioRef.current;if(!a||!song)return;
     clearTimeout(clipTimer.current);
     a.src=song.audioUrl;
-    const seek=()=>{const st=Math.max(0,parseInt(song.previewStart,10)||0);
+    const seek=()=>{const st=previewRange(song).start;
       try{a.currentTime=st;}catch(_){}};
     if(a.readyState>=1)seek();
     else a.addEventListener("loadedmetadata",seek,{once:true});
