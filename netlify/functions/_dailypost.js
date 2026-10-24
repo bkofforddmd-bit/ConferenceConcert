@@ -78,11 +78,12 @@ const SYSTEM = `You write short Facebook posts for "Conference as a Concert": a 
 
 Voice: a quiet note from one person to a friend. Sincere, plain, unpolished, a little vulnerable. Write as "I". Short sentences, ordinary words, nothing clever. No hype, no sales words, no exclamation marks, no emoji.
 
-Length: 40 to 70 words, two short paragraphs.
-1. One thing the speaker said that I keep thinking about, and the small, honest reason it landed in my own life this week (one concrete detail, not a lesson).
-2. One line offering the song, gently, as something I made from that talk and wanted to share. The link is added after your text, so do not write a URL.
+Length: 50 to 85 words, in three parts separated by blank lines.
+1. One thing the speaker said that I keep thinking about, and the small, honest reason it landed in my own life (one concrete detail, not a lesson).
+2. One sentence offering the song I made from the talk, and one sentence encouraging the reader to read or listen to the speaker’s full talk, which is worth more than the song. Do not write URLs; the links are added after your text.
+3. On its own final line: ONE short, genuine question to the reader that invites a reply. Vary it from post to post. Examples of the kind: what part of the song they liked best; how well the song matched the talk; which line of the talk stayed with them; whether they heard the talk live and what they remember. The post must end with that question mark.
 
-Rules: name the speaker once, naturally (for example "Elder Gong said"); the talk title is optional. Quote at most four words from the talk, or none. Do not invent facts, stories or quotes that are not in the talk; the personal detail must stay general enough to be true of almost anyone, and it should come from the talk itself (what the speaker describes), not from a stock scene. Vary it from post to post. Do not end with the same sentence every time; the offer of the song should be worded freshly and simply. No hashtags, no headings, no bullet points, no sign-off. Output only the post text.`;
+Rules: name the speaker once, naturally (for example "Elder Gong said"); the talk title is optional. Quote at most four words from the talk, or none. Do not invent facts, stories or quotes that are not in the talk; the personal detail must stay general enough to be true of almost anyone, and it should come from the talk itself (what the speaker describes), not from a stock scene. Vary it from post to post. No hashtags, no headings, no bullet points, no sign-off. Output only the post text.`;
 
 async function draftPost(song, opts) {
   const Anthropic = require("@anthropic-ai/sdk");
@@ -111,12 +112,31 @@ async function draftPost(song, opts) {
   return text;
 }
 
-// The draft plus the links, exactly as it will appear on Facebook.
+// The draft plus the links, exactly as it will appear on Facebook. The post
+// always ends with a question to the reader: the writer puts one on its final
+// line (we move it below the links); a draft without one gets a stock question.
+const STOCK_QUESTIONS = [
+  "What part of the song did you like best?",
+  (who) => "How well did this song match " + who + "\u2019s talk?",
+  "Which line stayed with you?",
+  (who) => "Did you hear " + who + "\u2019s talk live? What do you remember from it?",
+];
 function composePost(song, draft) {
   const songUrl = APP_URL + "?song=" + encodeURIComponent(song.id);
-  return draft.trim()
-    + "\n\n▶ Listen and sing along: " + songUrl
-    + (song.talkUrl ? "\n📖 Read the talk: " + song.talkUrl : "")
+  const who = song.speaker && song.speaker !== "\u2014" ? song.speaker : "the speaker";
+  const paras = String(draft || "").trim().split(/\n\s*\n/);
+  let question = "";
+  const last = paras[paras.length - 1].trim();
+  if (paras.length > 1 && /\?$/.test(last) && last.length <= 160) { question = last; paras.pop(); }
+  if (!question) {
+    let h = 0; for (const ch of String(song.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const q = STOCK_QUESTIONS[h % STOCK_QUESTIONS.length];
+    question = typeof q === "function" ? q(who) : q;
+  }
+  return paras.join("\n\n").trim()
+    + "\n\n\u25B6 Listen and sing along: " + songUrl
+    + (song.talkUrl ? "\n\uD83D\uDCD6 Read " + who + "\u2019s full talk: " + song.talkUrl : "")
+    + "\n\n" + question
     + "\n\n#GeneralConference #ConferenceAsAConcert";
 }
 
