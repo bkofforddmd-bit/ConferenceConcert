@@ -1266,27 +1266,41 @@ function ShareButton({title,text,url,label,small}){
    paste-back boxes so the app remembers where it was posted (the YouTube
    link also flips the player to the embed, which saves storage bandwidth). */
 const needsPost=s=>!!((s.videoUrl&&(!ytId(s.youtube)||!s.facebook))||(s.reelUrl&&!s.facebookReel));
+const YT_CHANNEL="ConferenceAsAConcert";
+const AI_DISCLAIMER="This music and video presentation is not an official production of The Church of Jesus Christ of Latter-day Saints and is not endorsed by the Church. The creators of this presentation fully and wholeheartedly sustain and support the Church, its leaders, doctrines, and teachings.";
 function publishTexts(song){
   const appUrl=location.origin+location.pathname;
   const songUrl=appUrl+"?song="+encodeURIComponent(song.id);
   const who=(song.speaker&&song.speaker!=="—")?song.speaker:"";
-  const conf=song.session||"";
-  const base=song.title+(who?" · "+who:"")+(conf?" · "+conf+" General Conference":"");
-  const full=base+" | Conference as a Concert";
-  const title=full.length<=100?full:(base.length<=100?base:base.slice(0,97)+"…");
-  const lastName=(who.split(/\s+/).pop()||"").replace(/[^A-Za-z]/g,"");
-  const tags=["#GeneralConference","#ConferenceAsAConcert","#ChurchOfJesusChrist","#LatterDaySaints","#LDSMusic"]
-    .concat(lastName?["#"+lastName]:[]).join(" ");
-  const about=(song.blurb?song.blurb+"\n\n":"")+
-    "A song from the General Conference talk “"+(song.talk||song.title)+"”"+(who?" by "+who:"")+(conf?" ("+conf+")":"")+".\n"+
-    (song.talkUrl?"\nRead the talk: "+song.talkUrl:"")+
-    "\nListen & sing along in the app: "+songUrl+
-    "\nBuild your own concert: "+appUrl+
-    "\n\nConference as a Concert — General Conference talks, set to music. Made by humans, with AI as an instrument.";
-  const description=about+"\n\n"+tags;
-  const lyrics=(song.lyrics||"").trim();
-  const descriptionLyrics=lyrics?about+"\n\nLYRICS\n\n"+lyrics+"\n\n"+tags:description;
-  const facebook="🎶 “"+song.title+"” — "+(who?who+"’s ":"")+(conf?conf+" ":"")+"General Conference talk"+
+  const conf=song.session?song.session+" General Conference":"";
+  const lastName=who.replace(/^(Elder|President|Sister|Bishop|Brother)\s+/i,"").split(/\s+/).pop().replace(/[^A-Za-z]/g,"");
+  // Title: the Studio's shape, trimmed from the right so the song name always survives.
+  const parts=[song.title,who?"Inspired by "+who:"","Conference As A Concert"].filter(Boolean);
+  let title=parts.join(" | ");
+  if(title.length>100)title=parts.slice(0,2).join(" | ");
+  if(title.length>100)title=song.title.slice(0,97)+"…";
+  const lead="♪ “"+song.title+"” — an original song inspired by"+(song.talk?" “"+song.talk+"”":" a General Conference talk")+
+    (who?" by "+who:"")+(conf?", "+conf:"")+".";
+  const hashtags=["#GeneralConference","#ConferenceAsAConcert","#ComeUntoChrist","#LDSMusic"].concat(lastName?["#"+lastName]:[]).join(" ");
+  const lyrics=(song.lyrics||"").replace(/\r/g,"").trim();
+  const body=[
+    lead,
+    song.blurb||"",
+    "",
+    song.talkUrl?"Read or watch the talk: "+song.talkUrl:"",
+    "Listen & sing along in the app: "+songUrl,
+    "More conference songs: "+appUrl,
+    "",
+    "If this message touched your heart, please share this video with someone who may need hope.",
+    "👍 Like the video · 🔔 Subscribe to the channel · Turn on notifications",
+  ];
+  const tail=["",AI_DISCLAIMER,"",hashtags];
+  const squash=arr=>arr.filter((x,i,a)=>!(x===""&&a[i-1]==="")).join("\n").replace(/^\n+|\n+$/g,"");
+  const description=squash(body.concat(tail)).slice(0,4900);
+  const descriptionLyrics=lyrics?squash(body.concat(["","LYRICS",lyrics],tail)).slice(0,4900):description;
+  const tags=["General Conference","Conference As A Concert","Latter-day Saint music","Come unto Christ",who,song.talk,song.title,conf]
+    .filter(Boolean).map(t=>String(t).replace(/,/g," ").trim()).filter((t,i,a)=>a.indexOf(t)===i).join(", ").slice(0,480);
+  const facebook="🎶 “"+song.title+"” — "+(who?who+"’s ":"")+(conf?conf+" ":"")+"talk"+
     (song.talk?" “"+song.talk+"”":"")+", set to music."+
     (song.blurb?"\n\n"+song.blurb:"")+
     "\n\n▶ Listen & sing along: "+songUrl+
@@ -1294,7 +1308,7 @@ function publishTexts(song){
     "\n\n#GeneralConference #ConferenceAsAConcert";
   return {title,description,descriptionLyrics,facebook,tags,songUrl};
 }
-function CopyBox({label,text,rows}){
+function CopyBox({label,text,rows,onChange}){
   const [done,setDone]=useState("");
   async function copy(){
     try{await navigator.clipboard.writeText(text);setDone("Copied!");}
@@ -1307,7 +1321,8 @@ function CopyBox({label,text,rows}){
       e("button",{onClick:copy,style:{padding:"3px 12px",fontSize:12,borderRadius:14,
         border:`1.5px solid ${C.gold}`,background:C.gold,color:"#0A1628",fontWeight:"bold",cursor:"pointer"}},"Copy"),
       done&&e("span",{style:{fontSize:12,color:C.src}},done)),
-    e("textarea",{readOnly:true,value:text,rows:rows||3,onFocus:ev=>ev.target.select(),
+    e("textarea",{readOnly:!onChange,value:text,rows:rows||3,onFocus:ev=>{if(!onChange)ev.target.select();},
+      onChange:onChange?(ev=>onChange(ev.target.value)):undefined,
       style:{width:"100%",padding:"9px 11px",fontSize:13,lineHeight:1.45,borderRadius:8,
         border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,resize:"vertical",
         fontFamily:"Georgia,serif"}}));
@@ -1550,7 +1565,9 @@ function ReelKit({song,texts,onEdited,btn,head}){
 }
 function PublishKit({song,onEdited}){
   const [open,setOpen]=useState(false);
-  const [withLyrics,setWithLyrics]=useState(false);
+  const [withLyrics,setWithLyrics]=useState(true);
+  const [ytf,setYtf]=useState(null);   // band's edits to the YouTube title / description / tags
+  const [copiedAll,setCopiedAll]=useState(false);
   const [facts,setFacts]=useState(null); // {dur,w,h,mb}
   const [dl,setDl]=useState("");       // "" | "working" | "done" | "fallback"
   const [yt,setYt]=useState(song.youtube||"");
@@ -1560,6 +1577,13 @@ function PublishKit({song,onEdited}){
   const [save,setSave]=useState("idle");
   const [msg,setMsg]=useState("");
   const texts=useMemo(()=>publishTexts(song),[song]);
+  useEffect(()=>{setYtf(null);},[texts]);
+  const ytText=Object.assign({title:texts.title,description:withLyrics?texts.descriptionLyrics:texts.description,tags:texts.tags},
+    Object.fromEntries(Object.entries(ytf||{}).filter(([,v])=>v!==undefined)));
+  const setYt3=(k,v)=>setYtf(f=>({...(f||{}),[k]:v}));
+  async function copyAll(){
+    try{await navigator.clipboard.writeText(ytText.title+"\n\n"+ytText.description+"\n\nTags: "+ytText.tags);setCopiedAll(true);setTimeout(()=>setCopiedAll(false),1800);}catch(_){}
+  }
   const pw=sessionStorage.getItem("cac_pw")||"";
   const ytOk=!!ytId(song.youtube),fbOk=!!song.facebook;
 
@@ -1643,15 +1667,19 @@ function PublishKit({song,onEdited}){
         dl==="done"&&e("span",{style:{fontSize:12.5,color:C.src}},"Saved to your downloads."),
         dl==="fallback"&&e("span",{style:{fontSize:12.5,color:C.src}},"Opened in a new tab — use Save video there.")),
 
-      step(2,"YouTube"),
-      e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
-        e("a",{href:"https://www.youtube.com/upload",target:"_blank",rel:"noopener",style:btn},"Open YouTube upload ↗")),
-      e(CopyBox,{label:"Title ("+texts.title.length+"/100)",text:texts.title,rows:2}),
+      step(2,"YouTube · @"+YT_CHANNEL),
+      e("div",{style:{fontSize:12.5,color:C.src,lineHeight:1.5,margin:"0 0 8px"}},
+        "Open the upload page signed in to the "+YT_CHANNEL+" channel, choose the MP4, then paste the title, description and tags. Edit any box first if you like."),
+      e("div",{style:{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}},
+        e("a",{href:"https://www.youtube.com/upload",target:"_blank",rel:"noopener",style:btn},"Open YouTube upload ↗"),
+        e("button",{onClick:copyAll,style:{...btn,borderColor:C.gold,color:C.gold}},copiedAll?"Copied ✓":"📋 Copy all three"),
+        ytf&&e("button",{onClick:()=>setYtf(null),style:{...btn,border:0,color:C.src,fontSize:12}},"Reset to suggested")),
+      e(CopyBox,{label:"Title ("+ytText.title.length+"/100)",text:ytText.title,rows:2,onChange:v=>setYt3("title",v)}),
       e("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:12.5,color:C.src,marginTop:10}},
-        e("input",{type:"checkbox",checked:withLyrics,onChange:ev=>setWithLyrics(ev.target.checked)}),
+        e("input",{type:"checkbox",checked:withLyrics,onChange:ev=>{setWithLyrics(ev.target.checked);setYtf(f=>f?{...f,description:undefined}:f);}}),
         "Include the lyrics in the description"),
-      e(CopyBox,{label:"Description",text:withLyrics?texts.descriptionLyrics:texts.description,rows:withLyrics?10:7}),
-      e(CopyBox,{label:"Tags (paste in the Tags box)",text:texts.tags.replace(/#/g,"").split(" ").join(", "),rows:1}),
+      e(CopyBox,{label:"Description ("+ytText.description.length+"/5000)",text:ytText.description,rows:withLyrics?12:9,onChange:v=>setYt3("description",v)}),
+      e(CopyBox,{label:"Tags (paste in the Tags box)",text:ytText.tags,rows:2,onChange:v=>setYt3("tags",v)}),
 
       step(3,"Facebook"),
       e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
