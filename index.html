@@ -5782,14 +5782,19 @@ function DailyPostsTab({songs=[]}){
           e("div",{style:{marginTop:10}},
             sg.draft||editing
               ?e("div",null,
-                  e("textarea",{value:text,rows:7,onChange:ev=>setEdits(x=>({...x,[sg.id]:ev.target.value})),
+                  e("textarea",{value:text,rows:7,autoFocus:editing&&!sg.draft,placeholder:"Your own words about this song and the talk. Links are added for you.",
+                    onChange:ev=>setEdits(x=>({...x,[sg.id]:ev.target.value})),
                     style:{width:"100%",padding:"9px 11px",fontSize:13.5,lineHeight:1.5,borderRadius:8,
                       border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,resize:"vertical",fontFamily:"Georgia,serif"}}),
                   e("div",{style:{fontSize:12,color:C.src,marginTop:4}},
                     sg.draft?(sg.draft.source==="band"?"Your words":"Written by Claude")+" · "+fmtWhen(sg.draft.at)+". ":"",
-                    "The song link, the talk link and two hashtags are added underneath when it posts."))
+                    "Added underneath when it posts:"),
+                  e("div",{style:{fontSize:12,color:C.src,marginTop:4,lineHeight:1.6,paddingLeft:10,borderLeft:`2px solid ${C.line}`}},
+                    e("div",null,"▶ Listen and sing along: ",e("span",{style:{color:C.text,overflowWrap:"anywhere"}},(st.appUrl||location.origin+"/")+"?song="+sg.id)),
+                    sg.talkUrl&&e("div",null,"📖 Read "+(sg.speaker||"the speaker")+"’s full talk: ",e("span",{style:{color:C.text,overflowWrap:"anywhere"}},sg.talkUrl)),
+                    e("div",null,"then a closing question (yours, if your text ends with one) and #GeneralConference #ConferenceAsAConcert")))
               :e("p",{style:{fontSize:13,color:C.src,margin:0,fontStyle:"italic"}},
-                  "No draft yet — it will be written automatically when it posts, or write it now to read it first.")),
+                  "No words yet. Write your own, ask Claude for a first draft, or leave it and Claude writes it when it posts. The song and talk links are added underneath either way.")),
           e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:10,alignItems:"center",fontSize:13}},
             sg.scheduledAt&&when[sg.id]==null
               ?e(React.Fragment,null,
@@ -5808,9 +5813,10 @@ function DailyPostsTab({songs=[]}){
                   when[sg.id]!=null&&e("button",{onClick:()=>setWhen(w=>{const n={...w};delete n[sg.id];return n;}),
                     style:{...btn,padding:"4px 8px",fontSize:12,border:0,color:C.src}},"Cancel"))),
           e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:10,alignItems:"center"}},
+            !sg.draft&&!editing&&e("button",{onClick:()=>setEdits(x=>({...x,[sg.id]:""})),disabled:!!b,style:{...btn,borderColor:C.gold,color:C.gold}},"✍️ Write my own"),
             e("button",{onClick:()=>act(sg.id,"draft",{action:"draft",songId:sg.id}),disabled:!!b||!st.claude,style:btn},
-              b==="draft"?"Writing…":(sg.draft?"✨ Rewrite with Claude":"✨ Write the draft")),
-            editing&&e("button",{onClick:()=>act(sg.id,"save",{action:"saveDraft",songId:sg.id,text:edits[sg.id]}),disabled:!!b,style:gold},
+              b==="draft"?"Writing…":(sg.draft?"✨ Rewrite with Claude":"✨ Ask Claude for a draft")),
+            editing&&e("button",{onClick:()=>act(sg.id,"save",{action:"saveDraft",songId:sg.id,text:edits[sg.id]}),disabled:!!b||!(edits[sg.id]||"").trim(),style:gold},
               b==="save"?"Saving…":"Save my words"),
             editing&&e("button",{onClick:()=>setEdits(x=>{const n={...x};delete n[sg.id];return n;}),style:{...btn,border:0,color:C.src}},"Cancel"),
             confirm===sg.id
