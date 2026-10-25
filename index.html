@@ -1826,6 +1826,25 @@ function tcAutoMatch(lines,paras){
     return {...l,cp:best,range,auto:true,phrase:l.phrase||(range?p.slice(range[0],range[1]):"")};
   });
 }
+/* 🔍 Find in the talk. A word or phrase: every paragraph containing it, the
+   phrase lit up. An idea (several words that don't appear together): the
+   paragraphs sharing the most of those words, best first, those words lit up.
+   Works on any list of texts (paragraphs, or lyric lines when the talk is
+   unavailable). Returns [{p, ranges:[[a,b]], kind:"phrase"|"idea"}]. */
+function tcSearch(texts,query){
+  const q=String(query||"").trim();if(q.length<2)return [];
+  const out=[];
+  texts.forEach((p,i)=>{const r=tcFindRange(p,q);if(r)out.push({p:i,ranges:[r],score:1000,kind:"phrase"});});
+  if(out.length)return out;
+  const stems=[...new Set(tcTokens(q))];if(!stems.length)return out;
+  const need=stems.length<=2?stems.length:Math.max(2,Math.ceil(stems.length*0.6));
+  texts.forEach((p,i)=>{
+    const ranges=[],have=new Set();const re=/[A-Za-z0-9'’]+/g;let m;
+    while((m=re.exec(p))){const st=tcTokens(m[0])[0];if(st&&stems.includes(st)){have.add(st);ranges.push([m.index,m.index+m[0].length]);}}
+    if(have.size>=need)out.push({p:i,ranges,score:have.size*10+Math.min(ranges.length,9),kind:"idea"});
+  });
+  return out.sort((a,b)=>b.score-a.score||a.p-b.p);
+}
 let tcSeq=0;
 function tcMarked(text,ranges,seq){
   if(!ranges||!ranges.length)return text;
@@ -1851,6 +1870,9 @@ function TalkLyricsBody({song,fill}){
   const [focus,setFocus]=useState(null);
   const [playing,setPlaying]=useState(false);
   const [note,setNote]=useState("");
+  const [q,setQ]=useState("");           // 🔍 find in the talk
+  const [hits,setHits]=useState([]);
+  const [hi,setHi]=useState(0);
   const talkBox=React.useRef(null),lyricBox=React.useRef(null);
   const paraRefs=React.useRef({}),lineRefs=React.useRef({}),audioRef=React.useRef(null),lastK=React.useRef(-2);
   useEffect(()=>{
@@ -1968,6 +1990,27 @@ function TalkLyricsBody({song,fill}){
       a.play().catch(()=>setNote("The browser held the music back — tap ▶ again."));
     }else a.pause();
   }
+  // Run the search (or step to match `idx`): light the paragraph up, slide both sides to it.
+  function runSearch(idx){
+    const inTalk=paras.length>0;
+    const res=q.trim().length>=2?tcSearch(inTalk?paras:lines.map(l=>l.text),q):[];
+    setHits(res);
+    if(!res.length){if(q.trim().length>=2)setNote("Nothing in the "+(inTalk?"talk":"lyrics")+" matches “"+q.trim()+"”.");return;}
+    setNote("");
+    const n=res.length,i=(((idx==null?0:idx)%n)+n)%n;setHi(i);
+    const h=res[i];
+    if(inTalk){
+      const snippet=paras[h.p].slice(h.ranges[0][0],h.ranges[h.ranges.length-1][1]);
+      const f=tcFocusLines(lines,byPara[h.p]||[],"“"+(h.kind==="phrase"?snippet:paras[h.p])+"”");
+      f.paras=[h.p];f.marks={[h.p]:h.ranges};
+      show(f,"search");
+    }else show(tcFocusLines(lines,[h.p]),"search");
+  }
+  useEffect(()=>{ // search as you type, after a short pause
+    if(st.status!=="ready")return;
+    const t=setTimeout(()=>{if(q.trim().length>=2)runSearch(0);else{setHits([]);setHi(0);}},320);
+    return()=>clearTimeout(t);
+  },[q,st.status]);
   const quote=focus?focus.quote:"";
   async function copyQuote(){
     try{await navigator.clipboard.writeText(quote);setNote("Copied — paste it into your post.");}
@@ -1991,6 +2034,17 @@ function TalkLyricsBody({song,fill}){
   if(st.status==="loading")return e("p",{style:{color:C.src,fontStyle:"italic",margin:0}},"Opening the talk…");
   if(st.status==="error")return e("p",{style:{color:"#E66A5C",margin:0}},st.error);
   return e(React.Fragment,null,
+    e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:8}},
+      e("input",{type:"search",value:q,onChange:ev=>setQ(ev.target.value),
+        onKeyDown:ev=>{if(ev.key==="Enter"){ev.preventDefault();runSearch(hits.length?(ev.shiftKey?hi-1:hi+1):0);}},
+        placeholder:paras.length?"🔍 Find in the talk: a word, a phrase, an idea…":"🔍 Find in the lyrics…","aria-label":"Find in the talk",
+        style:{flex:"1 1 240px",maxWidth:440,padding:"8px 12px",fontSize:14,borderRadius:8,
+          border:`1.5px solid ${hits.length?C.gold:C.line}`,background:"#0E1F3C",color:C.text}}),
+      hits.length>0&&e("span",{style:{fontSize:12.5,color:C.src,whiteSpace:"nowrap"}},
+        (hi+1)+" of "+hits.length+(hits[0].kind==="idea"?" · by idea":"")),
+      hits.length>1&&e("button",{onClick:()=>runSearch(hi-1),style:{...btn,padding:"5px 11px"},"aria-label":"Previous match",title:"Previous (Shift+Enter)"},"‹"),
+      hits.length>1&&e("button",{onClick:()=>runSearch(hi+1),style:{...btn,padding:"5px 11px"},"aria-label":"Next match",title:"Next (Enter)"},"›"),
+      q&&e("button",{onClick:()=>{setQ("");setHits([]);setHi(0);setFocus(null);},style:{...btn,border:0,color:C.src}},"Clear")),
     e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}},
       e("span",{style:{fontSize:13,color:C.src,flex:"1 1 200px"}},
         st.mapped?"Tap or highlight words on either side, and the other side lights up: the talk passage behind the lyrics, or the lyrics that came from the talk."
