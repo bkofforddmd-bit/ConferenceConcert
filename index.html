@@ -1758,47 +1758,61 @@ function tcFindRange(par,phrase){
   const tail=words.slice(-2).join(" "),b=lo.indexOf(tail,a);
   return b>=0?[a,b+tail.length]:[a,Math.min(par.length,a+ph.length)];
 }
-function TalkCompanion({song}){
-  const qs=new URLSearchParams(location.search);
-  const deep=qs.get("talk")==="1"&&qs.get("song")===song.id;
-  const [open,setOpen]=useState(deep);
-  const [st,setSt]=useState({status:"idle"});
+/* The side-by-side body, shared by the song card (inline) and the floating
+   window on the Daily posts tab. Songs without a Studio map still get the
+   talk and the lyrics side by side, just without the line-to-paragraph links. */
+function tcLinesFromLyrics(lyrics){
+  const out=[];let section="";
+  String(lyrics||"").replace(/\r/g,"").split("\n").forEach((ln,i)=>{
+    const t=ln.trim();if(!t)return;
+    const m=/^\[([^\]]+)\]$/.exec(t);if(m){section=m[1].trim();return;}
+    out.push({i,text:t,section,t:null,p:-1,phrase:""});
+  });
+  return out;
+}
+function TalkLyricsBody({song,fill}){
+  const [st,setSt]=useState({status:"loading"});
   const [sel,setSel]=useState(-1),[para,setPara]=useState(-1);
   const [playing,setPlaying]=useState(false);
   const [note,setNote]=useState("");
-  const rootRef=React.useRef(null),talkBox=React.useRef(null),lyricBox=React.useRef(null);
+  const talkBox=React.useRef(null),lyricBox=React.useRef(null);
   const paraRefs=React.useRef({}),lineRefs=React.useRef({}),audioRef=React.useRef(null),lastK=React.useRef(-2);
-  useEffect(()=>{if(deep&&rootRef.current)setTimeout(()=>rootRef.current&&rootRef.current.scrollIntoView({block:"start",behavior:"smooth"}),400);},[]);
   useEffect(()=>{
-    if(!open||st.status!=="idle")return;
-    setSt({status:"loading"});
+    let alive=true;
+    setSt({status:"loading"});setSel(-1);setPara(-1);lastK.current=-2;
     (async()=>{
       try{
-        const r=await fetch(`${API}/data?companion=${encodeURIComponent(song.id)}`);
-        const comp=await r.json();if(!r.ok)throw new Error(comp.error||"Couldn't load");
+        let comp=null;
+        if(song.companion){try{const r=await fetch(`${API}/data?companion=${encodeURIComponent(song.id)}`);if(r.ok)comp=await r.json();}catch(_){}}
         let paras=[];
-        const url=song.talkUrl||comp.talkUrl;
+        const url=song.talkUrl||(comp&&comp.talkUrl);
         if(url){try{
           const t=await fetch(`${API}/talk-text`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});
           const d=await t.json();if(t.ok&&d.text)paras=d.text.split("\n").map(x=>x.replace(/\s+/g," ").trim()).filter(x=>x.length>20);
         }catch(_){}}
-        // the Studio's paragraph numbers -> this copy of the talk
-        const pmap={};const normed=paras.map(tcNorm);
-        for(const [k,anchor] of Object.entries(comp.anchors||{})){
-          const want=String(anchor||"");if(!want)continue;
-          let j=normed.findIndex(x=>x.startsWith(want));
-          if(j<0){const short=want.split(" ").slice(0,6).join(" ");j=normed.findIndex(x=>x.includes(short));}
-          if(j>=0)pmap[k]=j;
-        }
-        const lines=(comp.lines||[]).map(l=>{
-          let cp=l.p>=0&&pmap[l.p]!=null?pmap[l.p]:-1;
-          if(cp<0&&l.phrase&&paras.length){const ph=tcNorm(l.phrase).split(" ").slice(0,5).join(" ");if(ph.split(" ").length>=3)cp=normed.findIndex(x=>x.includes(ph));}
-          return {...l,cp,range:cp>=0?tcFindRange(paras[cp],l.phrase):null};
-        });
-        setSt({status:"ready",paras,lines,comp});
-      }catch(err){setSt({status:"error",error:err.message});}
+        const normed=paras.map(tcNorm);
+        let lines;
+        if(comp&&Array.isArray(comp.lines)){
+          // the Studio's paragraph numbers -> this copy of the talk
+          const pmap={};
+          for(const [k,anchor] of Object.entries(comp.anchors||{})){
+            const want=String(anchor||"");if(!want)continue;
+            let j=normed.findIndex(x=>x.startsWith(want));
+            if(j<0){const short=want.split(" ").slice(0,6).join(" ");j=normed.findIndex(x=>x.includes(short));}
+            if(j>=0)pmap[k]=j;
+          }
+          lines=comp.lines.map(l=>{
+            let cp=l.p>=0&&pmap[l.p]!=null?pmap[l.p]:-1;
+            if(cp<0&&l.phrase&&paras.length){const ph=tcNorm(l.phrase).split(" ").slice(0,5).join(" ");if(ph.split(" ").length>=3)cp=normed.findIndex(x=>x.includes(ph));}
+            return {...l,cp,range:cp>=0?tcFindRange(paras[cp],l.phrase):null};
+          });
+        }else lines=tcLinesFromLyrics(song.lyrics).map(l=>({...l,cp:-1,range:null}));
+        if(!paras.length&&!lines.length)throw new Error("Couldn't open the talk or the lyrics for this song.");
+        if(alive)setSt({status:"ready",paras,lines,mapped:!!comp,talkFailed:!!url&&!paras.length,noUrl:!url});
+      }catch(err){if(alive)setSt({status:"error",error:err.message});}
     })();
-  },[open]);
+    return()=>{alive=false;try{audioRef.current&&audioRef.current.pause();}catch(_){}};
+  },[song.id]);
   const lines=st.lines||[],paras=st.paras||[];
   const byPara=useMemo(()=>{const m={};lines.forEach((l,k)=>{if(l.cp>=0)(m[l.cp]=m[l.cp]||[]).push(k);});return m;},[st]);
   const timed=lines.some(l=>l.t!=null);
@@ -1815,20 +1829,82 @@ function TalkCompanion({song}){
       a.play().catch(()=>setNote("The browser held the music back — tap ▶ again."));
     }else a.pause();
   }
+  // a quote to paste into a post: the lit phrase, else the tapped paragraph, else the tapped line
+  const quote=(()=>{
+    const l=sel>=0?lines[sel]:null;
+    if(l&&l.cp>=0&&l.range)return "“"+paras[l.cp].slice(l.range[0],l.range[1]).trim()+"”";
+    if(l&&l.phrase)return "“"+l.phrase+"”";
+    if(para>=0)return "“"+paras[para]+"”";
+    if(l)return l.text;
+    return "";
+  })();
+  async function copyQuote(){
+    try{await navigator.clipboard.writeText(quote);setNote("Copied — paste it into your post.");}
+    catch(_){setNote("Select the words and copy them by hand.");}
+    setTimeout(()=>setNote(""),2500);
+  }
   async function share(){
     const url=location.origin+location.pathname+"?song="+encodeURIComponent(song.id)+"&talk=1";
     const r=await shareOrCopy({title:song.title+" — the talk and the song",text:"Read “"+(song.talk||song.title)+"” beside the lyrics of “"+song.title+"”",url});
-    setNote(r==="shared"?"":r==="cancelled"?"":"Link copied — paste it anywhere.");setTimeout(()=>setNote(""),3000);
+    setNote(r==="shared"||r==="cancelled"?"":"Link copied — paste it anywhere.");setTimeout(()=>setNote(""),3000);
   }
-  const col={flex:"1 1 300px",minWidth:0,display:"flex",flexDirection:"column"};
-  // stacked on a phone: two shorter boxes so the talk and the song are both on screen
   const narrow=typeof window!=="undefined"&&window.innerWidth<700;
-  const box={maxHeight:narrow?"34vh":"min(62vh,560px)",overflowY:"auto",padding:narrow?"4px 8px 16px 2px":"4px 8px 40px 2px",position:"relative"};
+  const col={flex:"1 1 300px",minWidth:0,display:"flex",flexDirection:"column"};
+  const maxH=fill?(narrow?"20vh":"calc(100vh - 260px)"):(narrow?"34vh":"min(62vh,560px)");
+  const box={maxHeight:maxH,overflowY:"auto",padding:narrow?"4px 8px 16px 2px":"4px 8px 40px 2px",position:"relative"};
   const head={fontSize:11.5,letterSpacing:"0.09em",textTransform:"uppercase",color:C.gold,margin:"0 0 6px"};
-  const btn={padding:"7px 13px",fontSize:13,borderRadius:8,border:`1.5px solid ${C.line}`,background:"transparent",color:C.text,cursor:"pointer"};
+  const btn={padding:"6px 12px",fontSize:13,borderRadius:8,border:`1.5px solid ${C.line}`,background:"transparent",color:C.text,cursor:"pointer"};
   const activeP=sel>=0?(lines[sel]&&lines[sel].cp):para;
   const lit=new Set(sel>=0?[sel]:para>=0?(byPara[para]||[]):[]);
   let lastSection=null;
+  if(st.status==="loading")return e("p",{style:{color:C.src,fontStyle:"italic",margin:0}},"Opening the talk…");
+  if(st.status==="error")return e("p",{style:{color:"#E66A5C",margin:0}},st.error);
+  return e(React.Fragment,null,
+    e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}},
+      e("span",{style:{fontSize:13,color:C.src,flex:"1 1 200px"}},
+        st.mapped?"Tap a line of the song to see where it came from in the talk, or tap a paragraph to see the lines it became."
+          :"The talk and the lyrics side by side. (Publish from the Studio with the side-by-side to link each line to its paragraph.)"),
+      timed&&song.audioUrl&&e("button",{onClick:togglePlay,style:{...btn,borderColor:C.gold,color:C.gold}},playing?"⏸ Pause":"▶ Play along"),
+      e("button",{onClick:copyQuote,disabled:!quote,title:quote?"Copy: "+quote.slice(0,120):"Tap a line or a paragraph first",style:{...btn,opacity:quote?1:0.5}},"📋 Copy quote"),
+      song.companion&&e("button",{onClick:share,style:btn},"🔗 Share this view"),
+      note&&e("span",{style:{fontSize:12.5,color:C.src}},note)),
+    song.audioUrl&&e("audio",{ref:audioRef,src:song.audioUrl,preload:"none",onTimeUpdate:onTime,
+      onPlay:()=>setPlaying(true),onPause:()=>setPlaying(false),style:{display:"none"}}),
+    st.talkFailed&&e("p",{style:{fontSize:12.5,color:C.src,margin:"0 0 8px"}},"The talk's page couldn't be read just now — the lyrics show the phrase each line echoes."),
+    st.noUrl&&e("p",{style:{fontSize:12.5,color:C.src,margin:"0 0 8px"}},"This song has no talk link yet — add it with ✎ Edit this song."),
+    e("div",{style:{display:"flex",gap:16,flexWrap:"wrap"}},
+      paras.length?e("div",{style:{...col,flex:"1.25 1 300px"}},
+        e("div",{style:head},"From the talk",song.talk?e("span",{style:{textTransform:"none",letterSpacing:0,fontStyle:"italic"}}," · “"+song.talk+"”"):null),
+        e("div",{ref:talkBox,style:box},paras.map((p,i)=>{
+          const l=sel>=0?lines[sel]:null,range=l&&l.cp===i?l.range:null,n=(byPara[i]||[]).length;
+          return e("p",{key:i,ref:el=>{paraRefs.current[i]=el;},onClick:()=>pickPara(i),
+            style:{margin:"0 0 10px",padding:"8px 10px",borderRadius:8,lineHeight:1.6,fontSize:15,cursor:"pointer",
+              fontFamily:"Georgia,serif",color:C.text,opacity:activeP===i?1:(n||!st.mapped)?0.88:0.62,
+              background:activeP===i?"rgba(230,188,92,0.08)":"transparent",borderLeft:`3px solid ${activeP===i?C.gold:"transparent"}`}},
+            n?e("span",{style:{float:"right",marginLeft:8,fontSize:11,color:C.gold,border:"1px solid rgba(230,188,92,.45)",borderRadius:10,padding:"0 7px",fontFamily:"system-ui,sans-serif"}},"♪ "+n):null,
+            range?e(React.Fragment,null,p.slice(0,range[0]),e("mark",{style:{background:"rgba(230,188,92,.32)",color:"inherit",padding:"1px 2px",borderRadius:3}},p.slice(range[0],range[1])),p.slice(range[1])):p);
+        }))):null,
+      e("div",{style:col},
+        e("div",{style:head},"In the song · “"+song.title+"”"),
+        e("div",{ref:lyricBox,style:box},lines.map((l,k)=>{
+          const h=l.section&&l.section!==lastSection?e("div",{key:"s"+k,style:{fontSize:11,letterSpacing:"0.09em",textTransform:"uppercase",color:C.gold,margin:"12px 0 4px"}},l.section):null;
+          lastSection=l.section;
+          const on=lit.has(k),free=st.mapped&&l.p<0&&l.cp<0;
+          return e(React.Fragment,{key:k},h,
+            e("div",{ref:el=>{lineRefs.current[k]=el;},onClick:()=>pickLine(k),
+              style:{padding:"6px 10px",borderRadius:8,cursor:"pointer",fontSize:15.5,lineHeight:1.45,color:C.text,
+                background:on?"rgba(230,188,92,0.13)":"transparent",borderLeft:`3px solid ${on?C.gold:"transparent"}`,
+                fontWeight:on?"bold":"normal",opacity:free?0.6:1,fontStyle:free?"italic":"normal"}},
+              l.text,
+              (on||!paras.length)&&l.phrase?e("div",{style:{fontSize:13,color:C.src,fontStyle:"italic",fontWeight:"normal",marginTop:3,fontFamily:"Georgia,serif"}},"From the talk: “"+l.phrase+"”"):null));
+        })))));
+}
+function TalkCompanion({song}){
+  const qs=new URLSearchParams(location.search);
+  const deep=qs.get("talk")==="1"&&qs.get("song")===song.id;
+  const [open,setOpen]=useState(deep);
+  const rootRef=React.useRef(null);
+  useEffect(()=>{if(deep&&rootRef.current)setTimeout(()=>rootRef.current&&rootRef.current.scrollIntoView({block:"start",behavior:"smooth"}),400);},[]);
   return e("div",{ref:rootRef,style:{margin:"0 20px 16px"}},
     e("button",{onClick:()=>setOpen(v=>!v),"aria-expanded":open,
       style:{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 12px",borderRadius:8,
@@ -1837,43 +1913,38 @@ function TalkCompanion({song}){
       e("span",{style:{marginLeft:"auto",fontWeight:"normal",fontSize:12.5,color:C.src}},
         song.companion&&song.companion.found?song.companion.found+" lines traced to the talk":"")),
     open&&e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,padding:"14px 16px 16px",marginTop:8}},
-      st.status==="loading"&&e("p",{style:{color:C.src,fontStyle:"italic",margin:0}},"Opening the talk…"),
-      st.status==="error"&&e("p",{style:{color:"#E66A5C",margin:0}},st.error),
-      st.status==="ready"&&e(React.Fragment,null,
-        e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}},
-          e("span",{style:{fontSize:13,color:C.src,flex:"1 1 220px"}},"Tap a line of the song to see where it came from in the talk, or tap a paragraph to see the lines it became."),
-          timed&&song.audioUrl&&e("button",{onClick:togglePlay,style:{...btn,borderColor:C.gold,color:C.gold}},playing?"⏸ Pause":"▶ Play along"),
-          e("button",{onClick:share,style:btn},"🔗 Share this view"),
-          note&&e("span",{style:{fontSize:12.5,color:C.src}},note)),
-        song.audioUrl&&e("audio",{ref:audioRef,src:song.audioUrl,preload:"none",onTimeUpdate:onTime,
-          onPlay:()=>setPlaying(true),onPause:()=>setPlaying(false),style:{display:"none"}}),
-        e("div",{style:{display:"flex",gap:16,flexWrap:"wrap"}},
-          paras.length?e("div",{style:{...col,flex:"1.25 1 320px"}},
-            e("div",{style:head},"From the talk",song.talk?e("span",{style:{textTransform:"none",letterSpacing:0,fontStyle:"italic"}}," · “"+song.talk+"”"):null),
-            e("div",{ref:talkBox,style:box},paras.map((p,i)=>{
-              const l=sel>=0?lines[sel]:null,range=l&&l.cp===i?l.range:null,n=(byPara[i]||[]).length;
-              return e("p",{key:i,ref:el=>{paraRefs.current[i]=el;},onClick:()=>pickPara(i),
-                style:{margin:"0 0 10px",padding:"8px 10px",borderRadius:8,lineHeight:1.6,fontSize:15,cursor:"pointer",
-                  fontFamily:"Georgia,serif",color:C.text,opacity:activeP===i?1:n?0.88:0.62,
-                  background:activeP===i?"rgba(230,188,92,0.08)":"transparent",borderLeft:`3px solid ${activeP===i?C.gold:"transparent"}`}},
-                n?e("span",{style:{float:"right",marginLeft:8,fontSize:11,color:C.gold,border:"1px solid rgba(230,188,92,.45)",borderRadius:10,padding:"0 7px",fontFamily:"system-ui,sans-serif"}},"♪ "+n):null,
-                range?e(React.Fragment,null,p.slice(0,range[0]),e("mark",{style:{background:"rgba(230,188,92,.32)",color:"inherit",padding:"1px 2px",borderRadius:3}},p.slice(range[0],range[1])),p.slice(range[1])):p);
-            }))):null,
-          e("div",{style:col},
-            e("div",{style:head},"In the song · “"+song.title+"”"),
-            e("div",{ref:lyricBox,style:box},lines.map((l,k)=>{
-              const h=l.section&&l.section!==lastSection?e("div",{key:"s"+k,style:{fontSize:11,letterSpacing:"0.09em",textTransform:"uppercase",color:C.gold,margin:"12px 0 4px"}},l.section):null;
-              lastSection=l.section;
-              const on=lit.has(k);
-              return e(React.Fragment,{key:k},h,
-                e("div",{ref:el=>{lineRefs.current[k]=el;},onClick:()=>pickLine(k),
-                  style:{padding:"6px 10px",borderRadius:8,cursor:"pointer",fontSize:15.5,lineHeight:1.45,color:C.text,
-                    background:on?"rgba(230,188,92,0.13)":"transparent",borderLeft:`3px solid ${on?C.gold:"transparent"}`,
-                    fontWeight:on?"bold":"normal",opacity:l.p<0&&l.cp<0?0.6:1,fontStyle:l.p<0&&l.cp<0?"italic":"normal"}},
-                  l.text,
-                  // without the talk text (or on a narrow phone), the phrase rides under the line
-                  (on||!paras.length)&&l.phrase?e("div",{style:{fontSize:13,color:C.src,fontStyle:"italic",fontWeight:"normal",marginTop:3,fontFamily:"Georgia,serif"}},"From the talk: “"+l.phrase+"”"):null));
-            })))))));
+      e(TalkLyricsBody,{song})));
+}
+/* A floating reference window (Daily posts): docked to one side of the page,
+   not blocking it, so the post can be written while reading the talk and the
+   song. On a wide screen the page makes room for it; on a phone it is a sheet
+   along the bottom. */
+function TalkLyricsWindow({song,onClose}){
+  const [side,setSide]=useState(()=>{try{return localStorage.getItem("cac_tlw_side")||"right";}catch(_){return "right";}});
+  const narrow=typeof window!=="undefined"&&window.innerWidth<900;
+  const width="min(48vw, 820px)";
+  useEffect(()=>{
+    if(narrow)return;
+    const prop=side==="left"?"paddingLeft":"paddingRight";
+    const prev=document.body.style[prop];
+    document.body.style[prop]=width;
+    return()=>{document.body.style[prop]=prev;};
+  },[side,narrow]);
+  useEffect(()=>{const k=ev=>{if(ev.key==="Escape")onClose();};window.addEventListener("keydown",k);return()=>window.removeEventListener("keydown",k);},[]);
+  const flip=()=>{const n=side==="left"?"right":"left";setSide(n);try{localStorage.setItem("cac_tlw_side",n);}catch(_){}};
+  const frame=narrow
+    ?{left:0,right:0,bottom:0,height:"62vh",borderRadius:"14px 14px 0 0",borderBottom:0}
+    :{top:12,bottom:12,width,[side]:12,borderRadius:14};
+  const hbtn={padding:"4px 10px",fontSize:13,borderRadius:8,border:`1.5px solid ${C.line}`,background:"transparent",color:C.text,cursor:"pointer"};
+  return e("div",{role:"dialog","aria-label":"The talk and the song, side by side",
+      style:{position:"fixed",zIndex:9000,background:C.paper,border:`1.5px solid ${C.gold}`,boxShadow:"0 12px 40px rgba(0,0,0,.55)",
+        display:"flex",flexDirection:"column",overflow:"hidden",...frame}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:`1px solid ${C.line}`,background:"#182C4D"}},
+      e("span",{style:{color:C.gold,fontWeight:"bold",fontSize:15,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
+        "📖 "+song.title+(song.speaker?" · "+song.speaker:"")),
+      !narrow&&e("button",{onClick:flip,title:"Move the window to the other side",style:hbtn},side==="left"?"⇥ Right":"⇤ Left"),
+      e("button",{onClick:onClose,title:"Close (Esc)",style:hbtn},"✕")),
+    e("div",{style:{flex:1,overflowY:"auto",padding:"12px 14px"}},e(TalkLyricsBody,{song,fill:true})));
 }
 
 function SongCard({song,open,onToggle,canEdit,onEdited}){
@@ -5463,8 +5534,9 @@ function GamesTab({songs,loading}){
    dailypost-admin function does the work; this panel shows the switch, the
    connection, the next seven songs with their drafts, and the log.
    Setup (Page, token, keys) is in SETUP-FACEBOOK.md. */
-function DailyPostsTab(){
+function DailyPostsTab({songs=[]}){
   const [st,setSt]=useState(null);
+  const [refSong,setRefSong]=useState(null); // the talk & lyrics window, opened from a title
   const [state,setState]=useState("loading");
   const [msg,setMsg]=useState("");
   const [busy,setBusy]=useState({});   // songId -> "draft"|"save"|"post"|"skip"
@@ -5511,6 +5583,7 @@ function DailyPostsTab(){
     background:ok?"#5FB87A":"#E66A5C",marginRight:8,verticalAlign:"middle"}});
 
   return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"22px 20px 60px"}},
+    refSong&&e(TalkLyricsWindow,{key:refSong.id,song:refSong,onClose:()=>setRefSong(null)}),
     e("h1",{style:{fontSize:22,color:C.gold,margin:"0 0 6px"}},"One song a day on Facebook"),
     e("p",{style:{color:C.src,fontSize:13.5,lineHeight:1.6,margin:"0 0 18px"}},
       "Every post goes out at 7 AM Eastern: the next song in line each day while the switch is on, and any song you give a date. Each post is the video with a short, plain note on what the speaker said and why it matters today, then the links. ",
@@ -5564,9 +5637,16 @@ function DailyPostsTab(){
         return e("div",{key:sg.id,style:{background:C.paper,border:`1.5px solid ${i===0?C.gold:C.line}`,borderRadius:12,padding:"14px 16px",marginBottom:12}},
           e("div",{style:{display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap"}},
             e("span",{style:{color:C.src,fontSize:13}},i===0?"Next":"#"+(i+1)),
-            e("span",{style:{fontSize:17,fontWeight:"bold",color:C.gold}},sg.title),
+            e("button",{onClick:()=>setRefSong(songs.find(x=>x.id===sg.id)||{id:sg.id,title:sg.title,talk:sg.talk,talkUrl:sg.talkUrl,speaker:sg.speaker}),
+              title:"Open the talk and the lyrics side by side while you write",
+              style:{fontSize:17,fontWeight:"bold",color:C.gold,background:"transparent",border:0,padding:0,cursor:"pointer",
+                textDecoration:"underline",textDecorationColor:"rgba(230,188,92,.45)",textUnderlineOffset:4,fontFamily:"inherit"}},sg.title," 📖"),
             e("span",{style:{fontSize:13,color:C.src}},[sg.speaker,sg.session].filter(Boolean).join(" · "))),
-          sg.talk&&e("div",{style:{fontSize:13,color:C.text,fontStyle:"italic",marginTop:3}},"from “"+sg.talk+"”"),
+          sg.talk&&e("div",{style:{fontSize:13,color:C.text,fontStyle:"italic",marginTop:3}},"from ",
+            e("button",{onClick:()=>setRefSong(songs.find(x=>x.id===sg.id)||{id:sg.id,title:sg.title,talk:sg.talk,talkUrl:sg.talkUrl,speaker:sg.speaker}),
+              title:"Open the talk and the lyrics side by side while you write",
+              style:{fontSize:13,color:C.text,fontStyle:"italic",background:"transparent",border:0,padding:0,cursor:"pointer",
+                textDecoration:"underline",textDecorationColor:"rgba(240,233,218,.35)",textUnderlineOffset:3,fontFamily:"inherit"}},"“"+sg.talk+"”")),
           e("div",{style:{marginTop:10}},
             sg.draft||editing
               ?e("div",null,
@@ -5805,7 +5885,7 @@ function App(){
     tab==="games"&&e(GamesTab,{songs,loading}),
     tab==="inbox"&&e(SuggestionsInbox),
     tab==="stats"&&e(StatsTab,{songs}),
-    tab==="daily"&&e(DailyPostsTab),
+    tab==="daily"&&e(DailyPostsTab,{songs}),
     tab==="band"&&e(Band,{onAdded:()=>{setTab("library");load();},onBandChange}),
     e(ShuffleBar),
     e("footer",{style:{textAlign:"center",padding:"26px 20px",color:C.src,fontSize:13,
