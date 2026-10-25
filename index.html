@@ -5339,6 +5339,7 @@ function DailyPostsTab(){
     setBusy(b=>({...b,[songId]:kind}));setMsg("");
     try{const d=await api(body);
       if(kind==="post"&&d.posted)setMsg("Posted: "+d.posted.title);
+      if(kind==="unpost"&&d.ok)setMsg("Back in the queue: "+d.title+". Write your words on it under Next up, then Post this one now.");
       await load();
       if(kind==="draft"&&d.draft)setEdits(e=>{const n={...e};delete n[songId];return n;});
     }catch(err){setMsg(err.message);}
@@ -5432,7 +5433,7 @@ function DailyPostsTab(){
             e("button",{onClick:()=>act(sg.id,"skip",{action:"skip",songId:sg.id}),disabled:!!b,
               style:{...btn,marginLeft:"auto",color:C.src}},"Skip")));
       }),
-      msg&&e("p",{style:{color:/^Posted/.test(msg)?C.gold:"#E66A5C",fontSize:13.5}},msg),
+      msg&&e("p",{style:{color:/^(Posted|Back in the queue)/.test(msg)?C.gold:"#E66A5C",fontSize:13.5}},msg),
 
       st.skipped.length>0&&e("div",null,
         e("h2",{style:h2},"Skipped"),
@@ -5448,9 +5449,18 @@ function DailyPostsTab(){
               background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,padding:"8px 12px",fontSize:13.5}},
             e("span",{style:{color:C.src,whiteSpace:"nowrap"}},l.date),
             e("span",{style:{color:(l.status==="posted"||l.status==="reel")?"#7FD89A":l.status==="error"?"#E66A5C":C.src,fontWeight:"bold"}},
-              l.status==="posted"?"Posted":l.status==="reel"?"Reel posted":l.status==="error"?"Failed":"Nothing to post"),
+              l.status==="posted"?"Posted":l.status==="reel"?"Reel posted":l.status==="error"?"Failed":l.status==="unposted"?"Taken back":"Nothing to post"),
             e("span",{style:{color:C.text,flex:1}},l.title||l.note||""),
-            l.url&&e("a",{href:l.url,target:"_blank",rel:"noopener",style:{color:C.blue}},"open ↗"),
+            l.url&&l.status!=="unposted"&&e("a",{href:l.url,target:"_blank",rel:"noopener",style:{color:C.blue}},"open ↗"),
+            l.status==="posted"&&l.songId&&(confirm==="un:"+l.songId
+              ?e("span",{style:{display:"inline-flex",gap:6,alignItems:"center",fontSize:12.5,flexWrap:"wrap"}},
+                  e("span",{style:{color:C.src}},"Delete the post on Facebook first, then:"),
+                  e("button",{onClick:()=>act(l.songId,"unpost",{action:"unpost",songId:l.songId}),disabled:!!busy[l.songId],
+                    style:{...btn,padding:"4px 10px",fontSize:12,background:C.gold,borderColor:C.gold,color:"#0A1628",fontWeight:"bold"}},
+                    busy[l.songId]?"Working…":"Put it back in the queue"),
+                  e("button",{onClick:()=>setConfirm(null),style:{...btn,padding:"4px 8px",fontSize:12,border:0,color:C.src}},"No"))
+              :e("button",{onClick:()=>setConfirm("un:"+l.songId),title:"Forget this post so the song can be written and posted again",
+                  style:{...btn,padding:"4px 10px",fontSize:12}},"↩ Post again")),
             l.error&&e("span",{style:{color:"#E66A5C",width:"100%",fontSize:12.5}},l.error))))));
 }
 

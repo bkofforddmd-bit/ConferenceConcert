@@ -5,6 +5,8 @@
 //   { action:"saveDraft", songId, text } -> keep the band's own wording
 //   { action:"skip", songId, undo? }     -> leave a song out of the queue (or put it back)
 //   { action:"postNow", songId }         -> post that song to Facebook right now
+//   { action:"unpost", songId }          -> after deleting the post on Facebook by hand: forget the
+//                                           link on the song and mark the log entry, so it queues again
 //   Reels (the Studio's vertical video, song.reelUrl), three short steps from the Publish kit:
 //   { action:"reelStart", songId }                  -> { videoId }
 //   { action:"reelUpload", songId, videoId }        -> Facebook pulls the Reel file from its URL
@@ -70,6 +72,23 @@ exports.handler = async (event) => {
       if (!body.undo) state.skipped.push(songId);
       await dp.saveState(state);
       return json(200, { ok: true, skipped: state.skipped });
+    }
+    if (action === "unpost") {
+      const songId = clip(body.songId, 120);
+      if (!songId) return json(400, { error: "Need songId" });
+      const { getJSON, putJSON, CATALOG_KEY } = require("./_r2");
+      const catalog = await getJSON(CATALOG_KEY, { songs: [] });
+      const i = (catalog.songs || []).findIndex((s) => s.id === songId);
+      if (i < 0) return json(404, { error: "Song not found" });
+      catalog.songs[i].facebook = "";
+      catalog.songs[i].updatedAt = new Date().toISOString();
+      await putJSON(CATALOG_KEY, catalog);
+      const state = await dp.loadState();
+      let n = 0;
+      state.log.forEach((l) => { if (l.songId === songId && l.status === "posted") { l.status = "unposted"; l.unpostedAt = new Date().toISOString(); n++; } });
+      state.skipped = (state.skipped || []).filter((id) => id !== songId);
+      await dp.saveState(state);
+      return json(200, { ok: true, title: catalog.songs[i].title, logEntries: n });
     }
     if (action === "postNow") {
       const songId = clip(body.songId, 120);
