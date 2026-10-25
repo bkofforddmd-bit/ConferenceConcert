@@ -1805,13 +1805,35 @@ function tcFocusTalk(lines,paras,pieces){
   const quote="“"+pieces.map(x=>paras[x.p].slice(x.a,x.b).trim()).join(" … ")+"”";
   return {lines:ks,marks,paras:touched,quote};
 }
-function tcMarked(text,ranges){
+/* Lines with no traced link (or songs with no Studio map at all) find their
+   paragraph in the talk by the rare words they share, and the sentence in it
+   that shares the most. */
+function tcAutoMatch(lines,paras){
+  if(!paras.length)return lines;
+  const docs=paras.map(p=>new Set(tcTokens(p)));
+  const df=new Map();docs.forEach(d=>d.forEach(w=>df.set(w,(df.get(w)||0)+1)));
+  const N=docs.length;
+  return lines.map(l=>{
+    if(l.cp>=0)return l;
+    const q=[...new Set(tcTokens(l.text))];if(!q.length)return l;
+    let best=-1,bs=0,bh=0;
+    docs.forEach((d,i)=>{let sc=0,h=0;for(const w of q)if(d.has(w)){h++;sc+=Math.log(1+N/(df.get(w)||1));}if(sc>bs){bs=sc;best=i;bh=h;}});
+    if(best<0||bh<2)return l;
+    const p=paras[best],want=new Set(q);
+    const re=/[^.!?]+[.!?]*["”’)]*\s*/g;let m,range=null,rh=0;
+    while((m=re.exec(p))){const seg=m[0];if(!seg.trim())break;const hits=tcTokens(seg).filter(w=>want.has(w)).length;
+      if(hits>rh){rh=hits;range=[m.index,m.index+seg.trimEnd().length];}if(m.index+seg.length>=p.length)break;}
+    return {...l,cp:best,range,auto:true,phrase:l.phrase||(range?p.slice(range[0],range[1]):"")};
+  });
+}
+let tcSeq=0;
+function tcMarked(text,ranges,seq){
   if(!ranges||!ranges.length)return text;
   const rs=ranges.map(r=>[Math.max(0,r[0]),Math.min(text.length,r[1])]).filter(r=>r[1]>r[0]).sort((a,b)=>a[0]-b[0]);
   const merged=[];for(const r of rs){const last=merged[merged.length-1];if(last&&r[0]<=last[1])last[1]=Math.max(last[1],r[1]);else merged.push(r.slice());}
   const out=[];let at=0;
   merged.forEach((r,i)=>{if(r[0]>at)out.push(text.slice(at,r[0]));
-    out.push(e("mark",{key:i,style:{background:"rgba(230,188,92,.32)",color:"inherit",padding:"1px 2px",borderRadius:3}},text.slice(r[0],r[1])));at=r[1];});
+    out.push(e("mark",{key:(seq||0)+"-"+i,className:"tc-mark",style:{background:"rgba(230,188,92,.32)",color:"inherit",padding:"1px 2px",borderRadius:3,animation:"tcGlow 1.4s ease-out"}},text.slice(r[0],r[1])));at=r[1];});
   if(at<text.length)out.push(text.slice(at));
   return out;
 }
@@ -1822,6 +1844,8 @@ function tcOffset(root,node,off){
   const f=r.cloneContents();f.querySelectorAll("[data-skip]").forEach(x=>x.remove());
   return f.textContent.length;
 }
+if(typeof document!=="undefined"&&!document.getElementById("tc-glow")){const st=document.createElement("style");st.id="tc-glow";
+  st.textContent="@keyframes tcGlow{0%{background:rgba(230,188,92,.85);box-shadow:0 0 0 3px rgba(230,188,92,.35)}100%{background:rgba(230,188,92,.32);box-shadow:none}}";document.head.appendChild(st);}
 function TalkLyricsBody({song,fill}){
   const [st,setSt]=useState({status:"loading"});
   const [focus,setFocus]=useState(null);
@@ -1859,6 +1883,7 @@ function TalkLyricsBody({song,fill}){
           });
         }else lines=tcLinesFromLyrics(song.lyrics).map(l=>({...l,cp:-1,range:null}));
         if(!paras.length&&!lines.length)throw new Error("Couldn't open the talk or the lyrics for this song.");
+        lines=tcAutoMatch(lines,paras);
         if(alive)setSt({status:"ready",paras,lines,mapped:!!comp,talkFailed:!!url&&!paras.length,noUrl:!url});
       }catch(err){if(alive)setSt({status:"error",error:err.message});}
     })();
@@ -1869,11 +1894,29 @@ function TalkLyricsBody({song,fill}){
   const timed=lines.some(l=>l.t!=null);
   const scrollIn=(box,el)=>{if(box&&el)box.scrollTo({top:Math.max(0,el.offsetTop-box.clientHeight/3),behavior:"smooth"});};
   // show a focus: scroll the OTHER side to it (and the same side too when the music drives it)
-  function show(f,from,follow){
-    setFocus(f);
-    if(from!=="talk"&&f.paras.length)scrollIn(talkBox.current,paraRefs.current[f.paras[0]]);
-    if((from!=="lyrics"||follow)&&f.lines.length)scrollIn(lyricBox.current,lineRefs.current[f.lines[0]]);
-  }
+  const pending=React.useRef(null);
+  function show(f,from,follow){f={...f,seq:++tcSeq};pending.current={f,from,follow};setFocus(f);}
+  // Magnet: once the marks are on screen, slide the OTHER side so its match
+  // lines up level with what was picked (side by side), or into view (stacked).
+  useEffect(()=>{
+    const pd=pending.current;if(!pd||!focus||pd.f.seq!==focus.seq)return;pending.current=null;
+    setTimeout(()=>{ // (a timer, not a frame callback: it also runs in a background tab)
+      const tb=talkBox.current,lb=lyricBox.current;
+      const f=pd.f;
+      const pEl=f.paras.length?paraRefs.current[f.paras[0]]:null;
+      const talkEl=pEl?(pEl.querySelector(".tc-mark")||pEl):null;
+      const lineEl=f.lines.length?lineRefs.current[f.lines[0]]:null;
+      const side=tb&&lb&&(()=>{const a=tb.getBoundingClientRect(),b=lb.getBoundingClientRect();return Math.abs(a.left-b.left)>40&&a.top<b.bottom&&b.top<a.bottom;})();
+      // slide `box` so `el` sits level with `anchor`; if it can scroll no further, the anchor side moves the rest of the way
+      const magnet=(box,el,anchor,other)=>{const d=el.getBoundingClientRect().top-anchor.getBoundingClientRect().top;
+        const want=box.scrollTop+d,max=box.scrollHeight-box.clientHeight,got=Math.max(0,Math.min(max,want)),rest=want-got;
+        box.scrollTo({top:got,behavior:"smooth"});
+        if(other&&Math.abs(rest)>40)other.scrollTo({top:Math.max(0,other.scrollTop-rest),behavior:"smooth"});};
+      if(pd.from==="lyrics"&&talkEl){if(side&&lineEl)magnet(tb,talkEl,lineEl,lb);else scrollIn(tb,talkEl);}
+      else if(pd.from==="talk"&&lineEl){const anchor=pEl&&pEl.querySelector(".tc-mark");if(side&&anchor)magnet(lb,lineEl,anchor,tb);else scrollIn(lb,lineEl);}
+      else{if(lineEl)scrollIn(lb,lineEl);if(talkEl)scrollIn(tb,talkEl);}
+    },30);
+  },[focus]);
   const hasSelection=()=>{const s=window.getSelection&&window.getSelection();return !!(s&&!s.isCollapsed&&s.toString().trim());};
   function pickLine(k,follow){if(!follow&&hasSelection())return;show(tcFocusLines(lines,[k]),"lyrics",follow);}
   function pickPara(p){if(hasSelection())return;const ks=byPara[p]||[];const f=tcFocusLines(lines,ks,"“"+paras[p]+"”");f.paras=[p];show(f,"talk");}
@@ -1951,7 +1994,7 @@ function TalkLyricsBody({song,fill}){
     e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}},
       e("span",{style:{fontSize:13,color:C.src,flex:"1 1 200px"}},
         st.mapped?"Tap or highlight words on either side, and the other side lights up: the talk passage behind the lyrics, or the lyrics that came from the talk."
-          :"The talk and the lyrics side by side. Highlight words on either side to find the matching words on the other. (Publish from the Studio with the side-by-side to link every line to its paragraph.)"),
+          :"Tap or highlight a lyric and the talk slides to the passage it came from (matched by shared words — publish from the Studio with the side-by-side for exact links)."),
       timed&&song.audioUrl&&e("button",{onClick:togglePlay,style:{...btn,borderColor:C.gold,color:C.gold}},playing?"⏸ Pause":"▶ Play along"),
       e("button",{onClick:copyQuote,disabled:!quote,title:quote?"Copy: "+quote.slice(0,140):"Tap or highlight something first",style:{...btn,opacity:quote?1:0.5}},"📋 Copy quote"),
       focus&&e("button",{onClick:()=>{setFocus(null);try{window.getSelection().removeAllRanges();}catch(_){}},style:{...btn,border:0,color:C.src}},"Clear"),
@@ -1971,7 +2014,7 @@ function TalkLyricsBody({song,fill}){
               fontFamily:"Georgia,serif",color:C.text,opacity:on?1:(n||!st.mapped)?0.88:0.62,
               background:on?"rgba(230,188,92,0.08)":"transparent",borderLeft:`3px solid ${on?C.gold:"transparent"}`}},
             n?e("span",{"data-skip":"1",style:{float:"right",marginLeft:8,fontSize:11,color:C.gold,border:"1px solid rgba(230,188,92,.45)",borderRadius:10,padding:"0 7px",fontFamily:"system-ui,sans-serif",userSelect:"none"}},"♪ "+n):null,
-            tcMarked(p,focus&&focus.marks[i]));
+            tcMarked(p,focus&&focus.marks[i],focus&&focus.seq));
         }))):null,
       e("div",{style:col},
         e("div",{style:head},"In the song · “"+song.title+"”"),
