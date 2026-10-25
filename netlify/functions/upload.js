@@ -122,6 +122,41 @@ exports.handler = async (event) => {
     }
   }
 
+  // ---- 2c) The talk & lyrics side-by-side map from the Studio ----
+  // { action:"companion", id, data:{ v, talkUrl, anchors:{p:"opening words"}, lines:[{ i, text, section, t, p, phrase }] } }
+  // Stored beside the catalog (companion/<id>.json); the song gets a small flag.
+  // No talk text is kept: the app reads the talk itself when someone opens the view.
+  if (action === "companion") {
+    const id = clip(body.id, 120);
+    const d = body.data || {};
+    if (!id || !Array.isArray(d.lines) || !d.lines.length) return json(400, { error: "Need a song id and the lines" });
+    const lines = d.lines.slice(0, 300).map((l) => ({
+      i: Math.max(0, parseInt(l.i, 10) || 0),
+      text: clip(l.text, 200),
+      section: clip(l.section, 40),
+      t: (typeof l.t === "number" && isFinite(l.t)) ? Math.max(0, Math.min(7200, Math.round(l.t * 100) / 100)) : null,
+      p: Number.isInteger(l.p) && l.p >= 0 && l.p < 1000 ? l.p : -1,
+      phrase: clip(l.phrase, 300),
+    }));
+    const anchors = {};
+    for (const [k, v] of Object.entries(d.anchors || {}).slice(0, 400)) { const n = parseInt(k, 10); if (n >= 0 && n < 1000) anchors[n] = clip(v, 160); }
+    const doc = { v: 1, talkUrl: clip(d.talkUrl, 500), talkTitle: clip(d.talkTitle, 200), speaker: clip(d.speaker, 120),
+      paragraphCount: Math.max(0, parseInt(d.paragraphCount, 10) || 0), anchors, lines, at: new Date().toISOString() };
+    try {
+      const catalog = await getJSON(CATALOG_KEY, { songs: [] });
+      const songs = catalog.songs || [];
+      const i = songs.findIndex((x) => x.id === id);
+      if (i < 0) return json(404, { error: "Song not found" });
+      await putJSON(`companion/${id}.json`, doc);
+      songs[i] = { ...songs[i], companion: { lines: lines.length, found: lines.filter((l) => l.p >= 0).length, at: doc.at }, updatedAt: doc.at };
+      catalog.songs = songs;
+      await putJSON(CATALOG_KEY, catalog);
+      return json(200, { ok: true, companion: songs[i].companion });
+    } catch (err) {
+      return json(500, { error: "Could not save the talk & lyrics view", detail: String(err.message || err) });
+    }
+  }
+
   // ---- 3) Update an existing song in the catalog ----
   if (action === "update") {
     const song = body.song || {};
