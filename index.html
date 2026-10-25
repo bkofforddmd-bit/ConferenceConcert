@@ -85,8 +85,13 @@ const API = "/.netlify/functions";
 // 🔊 Play on Sonos — opens the Sonos Bridge (a small program on the home laptop,
 // see Desktop\Sonos Bridge) with this song or concert preloaded. Home Wi-Fi only.
 const SONOS_KEY="sonosBridge";
-const SONOS_DEFAULT="192.168.1.237:5005";
-const sonosAddr=()=>{try{return (localStorage.getItem(SONOS_KEY)||"").trim();}catch(_){return "";}};
+// The laptop's name on the home network; it keeps working when the router
+// hands the laptop a new number. The number itself still works if typed in ⚙.
+const SONOS_DEFAULT="brandon-laptop.local:5005";
+const SONOS_FALLBACK_IP="192.168.1.238:5005";
+const SONOS_STALE=["192.168.1.237:5005"]; // old defaults saved on phones — ignore them
+const sonosAddr=()=>{try{const a=(localStorage.getItem(SONOS_KEY)||"").trim();
+  return SONOS_STALE.includes(a)?"":a;}catch(_){return "";}};
 function SonosButton({app,song,concert,small,style}){
   const [editing,setEditing]=useState(false);
   const [addr,setAddr]=useState(()=>sonosAddr()||SONOS_DEFAULT);
@@ -98,9 +103,7 @@ function SonosButton({app,song,concert,small,style}){
   }
   function go(ev){
     ev&&ev.stopPropagation();
-    const a=sonosAddr();
-    if(!a){setEditing(true);return;}
-    window.open(link(a),"_blank","noopener");
+    window.open(link(sonosAddr()||SONOS_DEFAULT),"_blank","noopener");
   }
   function save(ev){
     ev&&ev.stopPropagation();
@@ -126,7 +129,7 @@ function SonosButton({app,song,concert,small,style}){
       e("button",{onClick:ev=>{ev.stopPropagation();setEditing(false);},
         style:{border:0,background:"transparent",color:C.src,cursor:"pointer",fontSize:12}},"Cancel"),
       e("span",{style:{fontSize:11,color:C.src,width:"100%"}},
-        "Sonos Bridge address, as shown in its window on the home laptop. Works only on the home Wi-Fi.")));
+        "Sonos Bridge address. "+SONOS_DEFAULT+" is the laptop's name; if that doesn't open, use the number shown in the bridge window (currently "+SONOS_FALLBACK_IP+"). Home Wi-Fi only.")));
 }
 const GROUPINGS = [
   {key:"session",label:"Conference"},{key:"speaker",label:"Speaker"},
