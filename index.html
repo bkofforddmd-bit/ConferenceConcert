@@ -374,20 +374,38 @@ function playPreview(song,onEnd){
 const shufflePlayer={
   el:typeof Audio!=="undefined"?new Audio():null,
   pool:[],queue:[],song:null,on:false,paused:false,errors:0,mode:"all",
+  ordered:false,label:"",key:"",history:[],
   listeners:new Set(),
-  emit(){const s={on:this.on,song:this.song,paused:this.paused,mode:this.mode};
+  emit(){const s={on:this.on,song:this.song,paused:this.paused,mode:this.mode,
+      ordered:this.ordered,label:this.label,key:this.key};
     this.listeners.forEach(f=>{try{f(s);}catch(_){}});
     this.mediaSession();},
-  start(pool,mode){
+  // mode "all" | "favorites" shuffle forever; mode "group" (opts.ordered) plays
+  // the pool once, in the order given — a conference, a year, a speaker.
+  start(pool,mode,opts){
     if(!this.el||!pool.length)return;
     stopPreview();
+    opts=opts||{};
     this.pool=pool.slice();this.queue=[];this.errors=0;this.mode=mode||"all";
+    this.ordered=!!opts.ordered;this.label=opts.label||"";this.key=opts.key||"";
+    this.history=[];
+    if(this.ordered)this.queue=this.pool.slice();
     this.on=true;this.paused=false;this.song=null;
     this.next();
   },
-  next(){
+  prev(){
     if(!this.on||!this.el)return;
+    // Early in a song, go back to the previous one; otherwise restart this one.
+    if(this.el.currentTime>4||!this.history.length){try{this.el.currentTime=0;}catch(_){}return;}
+    if(this.song)this.queue.unshift(this.song);
+    this.queue.unshift(this.history.pop());
+    this.song=null;this.next(true);
+  },
+  next(fromPrev){
+    if(!this.on||!this.el)return;
+    if(this.song&&!fromPrev){this.history.push(this.song);if(this.history.length>50)this.history.shift();}
     if(!this.queue.length){
+      if(this.ordered){this.stop();return;} // the group has played through
       this.queue=shuffleArr(this.pool);
       // Fresh shuffle: don't let the song that just ended play twice in a row.
       if(this.queue.length>1&&this.song&&this.queue[0].id===this.song.id)
@@ -408,7 +426,8 @@ const shufflePlayer={
   },
   stop(){
     if(!this.on)return;
-    this.on=false;this.song=null;this.queue=[];this.paused=false;
+    this.on=false;this.song=null;this.queue=[];this.paused=false;this.history=[];
+    this.ordered=false;this.label="";this.key="";
     if(this.el){this.el.pause();this.el.removeAttribute("src");try{this.el.load();}catch(_){}}
     this.emit();
   },
@@ -424,6 +443,7 @@ const shufflePlayer={
         ms.setActionHandler("play",()=>this.toggle());
         ms.setActionHandler("pause",()=>this.toggle());
         ms.setActionHandler("nexttrack",()=>this.next());
+        ms.setActionHandler("previoustrack",()=>this.prev());
       }else{ms.metadata=null;}
     }catch(_){}
   }
@@ -1777,6 +1797,26 @@ function OfflineShelf(){
 /* ---------------------------------------------------------- Library */
 /* Library toolbar button — one tap starts non-stop random play of every song
    that has audio. */
+function usePlayer(){
+  const [st,setSt]=useState({on:shufflePlayer.on,mode:shufflePlayer.mode,key:shufflePlayer.key});
+  useEffect(()=>{const f=s=>setSt({on:s.on,mode:s.mode,key:s.key});shufflePlayer.listeners.add(f);
+    return()=>{shufflePlayer.listeners.delete(f);};},[]);
+  return st;
+}
+/* ▶ Play on a Library heading: that group's songs, in order, once. */
+function GroupPlayButton({items,label,playerKey,small}){
+  const st=usePlayer();
+  const pool=items.filter(s=>s.audioUrl);
+  if(!pool.length)return null;
+  const on=st.on&&st.mode==="group"&&st.key===playerKey;
+  return e("button",{onClick:ev=>{ev.stopPropagation();
+      if(on)shufflePlayer.stop();else shufflePlayer.start(pool,"group",{ordered:true,label,key:playerKey});},
+    "aria-pressed":on,title:on?"Stop":"Play all "+pool.length+" song"+(pool.length===1?"":"s")+" from "+label+", in order",
+    style:{marginLeft:"auto",padding:small?"3px 10px":"5px 13px",fontSize:small?12:13,borderRadius:16,
+      border:`1.5px solid ${C.gold}`,background:on?"transparent":C.gold,color:on?C.gold:"#0A1628",
+      fontWeight:"bold",letterSpacing:0,textTransform:"none",whiteSpace:"nowrap",cursor:"pointer",flexShrink:0}},
+    on?"◼ Stop":"▶ Play "+(small?"":"all ")+pool.length);
+}
 function ShuffleAllButton({songs}){
   const [on,setOn]=useState(shufflePlayer.on&&shufflePlayer.mode==="all");
   useEffect(()=>{const f=s=>setOn(s.on&&s.mode==="all");shufflePlayer.listeners.add(f);
@@ -1832,7 +1872,7 @@ function ShuffleBar(){
     background:C.gold,color:"#0A1628",cursor:"pointer",flexShrink:0};
   return e(React.Fragment,null,
     e("div",{style:{height:86}}), // room so page content can scroll above the bar
-    e("div",{role:"region","aria-label":"Shuffle play",
+    e("div",{role:"region","aria-label":"Now playing",
       style:{position:"fixed",left:0,right:0,bottom:0,zIndex:60,
         background:C.brown,borderTop:`1.5px solid ${C.gold}`,
         boxShadow:"0 -6px 18px rgba(0,0,0,.45)",
@@ -1843,13 +1883,16 @@ function ShuffleBar(){
         alignItems:"center",padding:"10px 16px"}},
         e("div",{style:{flex:1,minWidth:0}},
           e("div",{style:{fontSize:11,letterSpacing:"0.18em",textTransform:"uppercase",
-            color:C.gold}},st.mode==="favorites"?"★ My favorites":"🔀 Shuffle play"),
+            color:C.gold}},st.mode==="group"?"▶ "+(st.label||"Playing in order"):st.mode==="favorites"?"★ My favorites":"🔀 Shuffle play"),
           e("div",{style:{fontWeight:"bold",color:C.text,fontSize:15,whiteSpace:"nowrap",
             overflow:"hidden",textOverflow:"ellipsis"}},st.song.title),
           st.song.speaker&&st.song.speaker!=="—"&&e("div",{style:{fontSize:12,
             color:C.src,whiteSpace:"nowrap",overflow:"hidden",
             textOverflow:"ellipsis"}},st.song.speaker)),
         e(FavStar,{song:st.song,size:24,style:{flexShrink:0}}),
+        st.mode==="group"&&e("button",{onClick:()=>shufflePlayer.prev(),style:{...btn,
+          background:"transparent",border:`1.5px solid ${C.gold}`,color:C.gold},
+          "aria-label":"Previous song"},"⏮"),
         e("button",{onClick:()=>shufflePlayer.toggle(),style:btn,
           "aria-label":st.paused?"Play":"Pause"},st.paused?"▶":"❚❚"),
         e("button",{onClick:()=>shufflePlayer.next(),style:{...btn,
@@ -1858,7 +1901,7 @@ function ShuffleBar(){
         e("button",{onClick:()=>shufflePlayer.stop(),style:{width:34,height:34,
           borderRadius:"50%",border:`1.5px solid ${C.line}`,background:"transparent",
           color:C.src,cursor:"pointer",flexShrink:0,fontSize:14},
-          "aria-label":"Stop shuffle play"},"✕"))));
+          "aria-label":"Stop"},"✕"))));
 }
 
 function Library({songs,loading,error,onReload,focusId}){
@@ -1959,15 +2002,22 @@ function Library({songs,loading,error,onReload,focusId}){
     groups.map((g,gi)=>e("section",{key:g.name||gi,style:{marginTop:gi?(g.big?42:34):18}},
       g.name&&e("h2",{style:g.big
         ?{fontSize:26,fontWeight:"bold",letterSpacing:"0.04em",color:C.gold,
-          borderBottom:`2px solid ${C.gold}`,paddingBottom:6,marginBottom:16}
+          borderBottom:`2px solid ${C.gold}`,paddingBottom:6,marginBottom:16,
+          display:"flex",alignItems:"center",gap:8}
         :{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
-          color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,marginBottom:14}},
+          color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,marginBottom:14,
+          display:"flex",alignItems:"center",gap:8}},
         g.name,e("span",{style:{color:"#7E97BD",marginLeft:8,fontSize:13,fontWeight:"normal",
-          letterSpacing:0}},g.parts.reduce((n,p)=>n+p.items.length,0))),
+          letterSpacing:0}},g.parts.reduce((n,p)=>n+p.items.length,0)),
+        e(GroupPlayButton,{items:g.parts.flatMap(p=>p.items),
+          label:g.big?"All of "+g.name:g.name,playerKey:group+":"+g.name,small:!g.big})),
       g.parts.map((p,pi)=>e("div",{key:p.name||pi,style:{marginTop:pi?26:0}},
         p.name&&e("h3",{style:{fontSize:14,letterSpacing:"0.14em",textTransform:"uppercase",
-          color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"0 0 14px"}},
-          "♪ "+p.name,e("span",{style:{color:"#7E97BD",marginLeft:8,fontSize:13}},p.items.length)),
+          color:C.src,borderBottom:`1.5px solid ${C.line}`,paddingBottom:7,margin:"0 0 14px",
+          display:"flex",alignItems:"center",gap:8}},
+          "♪ "+p.name,e("span",{style:{color:"#7E97BD",marginLeft:8,fontSize:13}},p.items.length),
+          e(GroupPlayButton,{items:p.items,label:p.name+" "+g.name+" conference",
+            playerKey:group+":"+g.name+":"+p.name,small:true})),
         e("div",{style:{display:"flex",flexDirection:"column",gap:12}},
           p.items.map(s=>e(SongCard,{key:s.id,song:s,open:openId===s.id,
             canEdit,onEdited:onReload,
