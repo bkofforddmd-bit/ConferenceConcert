@@ -5,6 +5,8 @@
 //   { action:"saveDraft", songId, text } -> keep the band's own wording
 //   { action:"skip", songId, undo? }     -> leave a song out of the queue (or put it back)
 //   { action:"postNow", songId }         -> post that song to Facebook right now
+//   { action:"schedule", songId, at }    -> post this song at "YYYY-MM-DDTHH:MM" Eastern ("" clears)
+//   { action:"settings", dailyTime }     -> time of day for the daily series, "HH:MM" Eastern
 //   { action:"unpost", songId }          -> after deleting the post on Facebook by hand: forget the
 //                                           link on the song and mark the log entry, so it queues again
 //   Reels (the Studio's vertical video, song.reelUrl), three short steps from the Publish kit:
@@ -29,13 +31,15 @@ exports.handler = async (event) => {
   try {
     if (action === "status") {
       const [state, songs, fb] = await Promise.all([dp.loadState(), dp.loadSongs(), dp.fbCheck()]);
-      const queue = dp.buildQueue(songs, state);
+      const queue = dp.buildQueue(songs, state, { includeScheduled: true });
       return json(200, {
         enabled: state.enabled, lastRunAt: state.lastRunAt,
+        dailyTime: state.dailyTime || dp.DEFAULT_DAILY_TIME, nowLocal: dp.localDateTime(Date.now()),
+        schedule: state.schedule || {},
         facebook: fb, claude: !!process.env.ANTHROPIC_API_KEY, appUrl: dp.APP_URL,
         queueLength: queue.length,
         next: queue.slice(0, 7).map((s) => ({ id: s.id, title: s.title, speaker: s.speaker, session: s.session,
-          talk: s.talk, talkUrl: s.talkUrl, draft: state.drafts[s.id] || null })),
+          talk: s.talk, talkUrl: s.talkUrl, draft: state.drafts[s.id] || null, scheduledAt: (state.schedule || {})[s.id] || null })),
         skipped: (state.skipped || []).map((id) => { const s = songs.find((x) => x.id === id); return { id, title: s ? s.title : id }; }),
         log: state.log.slice(0, 30),
       });
@@ -72,6 +76,25 @@ exports.handler = async (event) => {
       if (!body.undo) state.skipped.push(songId);
       await dp.saveState(state);
       return json(200, { ok: true, skipped: state.skipped });
+    }
+    if (action === "schedule") {
+      const songId = clip(body.songId, 120), at = clip(body.at, 16);
+      if (!songId) return json(400, { error: "Need songId" });
+      if (at && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(at)) return json(400, { error: "Time must look like 2026-10-27T09:30" });
+      const state = await dp.loadState();
+      if (!state.schedule) state.schedule = {};
+      if (at) { state.schedule[songId] = at; state.skipped = (state.skipped || []).filter((id) => id !== songId); }
+      else delete state.schedule[songId];
+      await dp.saveState(state);
+      return json(200, { ok: true, schedule: state.schedule });
+    }
+    if (action === "settings") {
+      const t = clip(body.dailyTime, 5);
+      if (!/^\d{2}:\d{2}$/.test(t)) return json(400, { error: "Time must look like 09:30" });
+      const state = await dp.loadState();
+      state.dailyTime = t;
+      await dp.saveState(state);
+      return json(200, { ok: true, dailyTime: t });
     }
     if (action === "unpost") {
       const songId = clip(body.songId, 120);

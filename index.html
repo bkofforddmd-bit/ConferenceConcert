@@ -5326,6 +5326,8 @@ function DailyPostsTab(){
   const [busy,setBusy]=useState({});   // songId -> "draft"|"save"|"post"|"skip"
   const [edits,setEdits]=useState({}); // songId -> text being edited
   const [confirm,setConfirm]=useState(null); // songId awaiting "Yes, post it"
+  const [when,setWhen]=useState({});           // songId -> "YYYY-MM-DDTHH:MM" being picked
+  const [dailyTime,setDailyTime]=useState("");
   const pw=sessionStorage.getItem("cac_pw")||"";
   async function api(body){
     const r=await fetch(`${API}/dailypost-admin`,{method:"POST",
@@ -5346,6 +5348,14 @@ function DailyPostsTab(){
     setBusy(b=>{const n={...b};delete n[songId];return n;});setConfirm(null);
   }
   const fmtWhen=iso=>{try{return new Date(iso).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});}catch(_){return iso;}};
+  // "2026-10-27T09:30" (Eastern wall clock) -> "Mon, Oct 27, 9:30 AM"
+  const fmtLocal=v=>{const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(v||"");if(!m)return v||"";
+    const d=new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5]);
+    return d.toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});};
+  const fmtClock=t=>{const m=/^(\d{2}):(\d{2})$/.exec(t||"");if(!m)return t||"";const h=+m[1];
+    return ((h%12)||12)+":"+m[2]+(h<12?" AM":" PM");};
+  const nextHalfHour=()=>{const d=new Date(Date.now()+35*60000);d.setMinutes(d.getMinutes()<30?30:60,0,0);
+    const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes());};
   const btn={padding:"7px 13px",fontSize:13,borderRadius:8,border:`1.5px solid ${C.line}`,
     background:"transparent",color:C.text,cursor:"pointer"};
   const gold={...btn,background:C.gold,borderColor:C.gold,color:"#0A1628",fontWeight:"bold"};
@@ -5357,7 +5367,7 @@ function DailyPostsTab(){
   return e("main",{style:{maxWidth:920,margin:"0 auto",padding:"22px 20px 60px"}},
     e("h1",{style:{fontSize:22,color:C.gold,margin:"0 0 6px"}},"One song a day on Facebook"),
     e("p",{style:{color:C.src,fontSize:13.5,lineHeight:1.6,margin:"0 0 18px"}},
-      "Every morning (about 8–9 AM Eastern) the next song goes to the Page: the video, with a short, plain note on what the speaker said and why it matters today, then the links. ",
+      "Each day at the time you set, the next song goes to the Page: the video, with a short, plain note on what the speaker said and why it matters today, then the links. Any song can also be given its own date and time. ",
       "Newest conference first, in the order the talks were given. Songs without a video are left for the Publish kit."),
     state==="loading"&&!st&&e("p",{style:{color:C.src,fontStyle:"italic"}},"Checking…"),
     state==="error"&&e("p",{style:{color:"#E66A5C"}},msg),
@@ -5371,9 +5381,18 @@ function DailyPostsTab(){
             e("button",{onClick:()=>act("_toggle","toggle",{action:"toggle",enabled:!st.enabled}),
               disabled:!!busy._toggle||(!st.enabled&&!(st.facebook&&st.facebook.ok)),
               style:st.enabled?btn:gold},st.enabled?"Switch off":"Switch on")),
+          e("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10,fontSize:13,color:C.text}},
+            "Posts each day at",
+            e("input",{type:"time",step:1800,value:dailyTime||st.dailyTime||"09:00",onChange:ev=>setDailyTime(ev.target.value),
+              style:{padding:"4px 8px",fontSize:13,borderRadius:6,border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text}}),
+            e("span",{style:{color:C.src,fontSize:12.5}},"Eastern"),
+            dailyTime&&dailyTime!==st.dailyTime&&e("button",{onClick:()=>act("_settings","settings",{action:"settings",dailyTime}),
+              disabled:!!busy._settings,style:{...btn,padding:"4px 10px",fontSize:12}},busy._settings?"Saving…":"Save time")),
           e("div",{style:{fontSize:12.5,color:C.src,marginTop:6}},
-            st.lastRunAt?"Last run "+fmtWhen(st.lastRunAt)+". ":"Hasn't run yet. ",
-            st.queueLength+" song"+(st.queueLength===1?"":"s")+" waiting.")),
+            st.lastRunAt?"Last check "+fmtWhen(st.lastRunAt)+". ":"Hasn't run yet. ",
+            st.queueLength+" song"+(st.queueLength===1?"":"s")+" waiting"+
+            (Object.keys(st.schedule||{}).length?", "+Object.keys(st.schedule).length+" with a set time":"")+". ",
+            "The check runs every half hour, so a post lands within 30 minutes of its time.")),
         e("div",{style:{flex:"1 1 260px",background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,padding:"14px 16px"}},
           e("div",{style:{fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase",color:C.src}},"Connections"),
           e("div",{style:{marginTop:8,fontSize:14,color:C.text}},dot(st.facebook&&st.facebook.ok),
@@ -5417,7 +5436,25 @@ function DailyPostsTab(){
                     sg.draft?(sg.draft.source==="band"?"Your words":"Written by Claude")+" · "+fmtWhen(sg.draft.at)+". ":"",
                     "The song link, the talk link and two hashtags are added underneath when it posts."))
               :e("p",{style:{fontSize:13,color:C.src,margin:0,fontStyle:"italic"}},
-                  "No draft yet — it will be written automatically on the morning it posts, or write it now to read it first.")),
+                  "No draft yet — it will be written automatically when it posts, or write it now to read it first.")),
+          e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:10,alignItems:"center",fontSize:13}},
+            sg.scheduledAt&&when[sg.id]==null
+              ?e(React.Fragment,null,
+                  e("span",{style:{color:C.gold,fontWeight:"bold"}},"📅 Posts "+fmtLocal(sg.scheduledAt)+" Eastern"),
+                  e("button",{onClick:()=>setWhen(w=>({...w,[sg.id]:sg.scheduledAt})),style:{...btn,padding:"4px 10px",fontSize:12}},"Change"),
+                  e("button",{onClick:()=>act(sg.id,"schedule",{action:"schedule",songId:sg.id,at:""}),disabled:!!b,
+                    style:{...btn,padding:"4px 10px",fontSize:12,border:0,color:C.src}},"Clear"))
+              :e(React.Fragment,null,
+                  e("span",{style:{color:C.src}},"📅 Post on"),
+                  e("input",{type:"datetime-local",step:1800,value:when[sg.id]||"",
+                    onChange:ev=>setWhen(w=>({...w,[sg.id]:ev.target.value})),
+                    onFocus:()=>{if(!when[sg.id])setWhen(w=>({...w,[sg.id]:nextHalfHour()}));},
+                    style:{padding:"4px 8px",fontSize:13,borderRadius:6,border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text}}),
+                  e("span",{style:{color:C.src,fontSize:12.5}},"Eastern"),
+                  when[sg.id]&&e("button",{onClick:()=>{const v=when[sg.id].slice(0,16);act(sg.id,"schedule",{action:"schedule",songId:sg.id,at:v});setWhen(w=>{const n={...w};delete n[sg.id];return n;});},
+                    disabled:!!b,style:{...gold,padding:"4px 10px",fontSize:12}},b==="schedule"?"Saving…":"Set time"),
+                  when[sg.id]!=null&&e("button",{onClick:()=>setWhen(w=>{const n={...w};delete n[sg.id];return n;}),
+                    style:{...btn,padding:"4px 8px",fontSize:12,border:0,color:C.src}},"Cancel"))),
           e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:10,alignItems:"center"}},
             e("button",{onClick:()=>act(sg.id,"draft",{action:"draft",songId:sg.id}),disabled:!!b||!st.claude,style:btn},
               b==="draft"?"Writing…":(sg.draft?"✨ Rewrite with Claude":"✨ Write the draft")),
@@ -5449,7 +5486,7 @@ function DailyPostsTab(){
               background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:10,padding:"8px 12px",fontSize:13.5}},
             e("span",{style:{color:C.src,whiteSpace:"nowrap"}},l.date),
             e("span",{style:{color:(l.status==="posted"||l.status==="reel")?"#7FD89A":l.status==="error"?"#E66A5C":C.src,fontWeight:"bold"}},
-              l.status==="posted"?"Posted":l.status==="reel"?"Reel posted":l.status==="error"?"Failed":l.status==="unposted"?"Taken back":"Nothing to post"),
+              l.status==="posted"?(l.via==="scheduled"?"Posted (scheduled)":l.via==="manual"?"Posted (by hand)":"Posted"):l.status==="reel"?"Reel posted":l.status==="error"?"Failed":l.status==="unposted"?"Taken back":"Nothing to post"),
             e("span",{style:{color:C.text,flex:1}},l.title||l.note||""),
             l.url&&l.status!=="unposted"&&e("a",{href:l.url,target:"_blank",rel:"noopener",style:{color:C.blue}},"open ↗"),
             l.status==="posted"&&l.songId&&(confirm==="un:"+l.songId

@@ -5,9 +5,10 @@
 [functions]
   node_bundler = "esbuild"
 
-# One Facebook post a day, 13:00 UTC = 9 AM EDT / 8 AM EST (see SETUP-FACEBOOK.md)
+# Facebook posting check every half hour: scheduled songs at their time, the
+# daily series at its time of day (both Eastern; see SETUP-FACEBOOK.md)
 [functions."daily-post"]
-  schedule = "0 13 * * *"
+  schedule = "*/30 * * * *"
 
 # Optional: nicer paths if you ever want them.
 [[redirects]]

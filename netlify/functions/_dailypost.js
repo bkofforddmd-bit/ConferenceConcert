@@ -16,6 +16,14 @@ const APP_URL = (process.env.APP_URL || "https://conferenceconcert.netlify.app/"
 const TZ = "America/New_York";
 
 const clip = (s, n) => String(s == null ? "" : s).slice(0, n).trim();
+// Eastern wall-clock "YYYY-MM-DDTHH:MM" — schedule times are stored this way,
+// so comparing strings compares moments, and DST takes care of itself.
+function localDateTime(ms) {
+  const p = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(ms || Date.now()));
+  const g = (t) => p.find((x) => x.type === t).value;
+  return `${g("year")}-${g("month")}-${g("day")}T${g("hour")}:${g("minute")}`;
+}
 function localDate(ms) {
   const p = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" })
     .formatToParts(new Date(ms || Date.now()));
@@ -24,7 +32,8 @@ function localDate(ms) {
 }
 
 // ---------- state ----------
-const emptyState = () => ({ enabled: false, drafts: {}, skipped: [], log: [], lastRunAt: null });
+const DEFAULT_DAILY_TIME = "09:00"; // Eastern
+const emptyState = () => ({ enabled: false, dailyTime: DEFAULT_DAILY_TIME, schedule: {}, drafts: {}, skipped: [], log: [], lastRunAt: null });
 async function loadState() {
   const s = await getJSON(STATE_KEY, null);
   return Object.assign(emptyState(), s || {});
@@ -53,11 +62,13 @@ function confOf(song) {
 }
 // Songs still to post: have a video, not yet on Facebook, not skipped.
 // Newest conference first; inside a conference, the order the talks were given.
-function buildQueue(songs, state) {
+function buildQueue(songs, state, opts) {
   const posted = new Set(state.log.filter((l) => l.status === "posted").map((l) => l.songId));
   const skipped = new Set(state.skipped || []);
+  const scheduled = state.schedule || {};
   return songs
-    .filter((s) => s.videoUrl && !s.facebook && !posted.has(s.id) && !skipped.has(s.id))
+    .filter((s) => s.videoUrl && !s.facebook && !posted.has(s.id) && !skipped.has(s.id) && !(opts && opts.includeScheduled) && !scheduled[s.id]
+      || (opts && opts.includeScheduled && s.videoUrl && !s.facebook && !posted.has(s.id) && !skipped.has(s.id)))
     .map((s) => ({ s, c: confOf(s) }))
     .sort((a, b) => (b.c.year - a.c.year) || (b.c.month - a.c.month) || (a.c.order - b.c.order)
       || String(a.s.title).localeCompare(String(b.s.title)))
@@ -247,18 +258,37 @@ async function fbReelStatus(videoId) {
 }
 
 // ---------- one run ----------
-// opts: { force (ignore enabled + once-a-day), songId (post this one), deps (test doubles) }
+// opts: { force (post now: ignore the switch and the clock), songId (post this one), deps (test doubles) }
+// Without force (the half-hourly check): first any song whose scheduled time
+// has come, then the daily series once a day at its time of day.
 async function runOnce(opts = {}) {
   const deps = Object.assign({ loadState, saveState, loadSongs, draftPost, fbPostVideo, now: Date.now }, opts.deps || {});
   const state = await deps.loadState();
+  if (!state.schedule) state.schedule = {};
   const today = localDate(deps.now());
+  const nowLocal = localDateTime(deps.now());
+  let via = opts.force ? "manual" : "daily";
+  let songs = null, song = null;
   if (!opts.force) {
-    if (!state.enabled) return { skipped: "Daily posting is switched off" };
-    if (state.log.some((l) => l.status === "posted" && l.date === today)) return { skipped: "Already posted today" };
+    const due = Object.entries(state.schedule).filter(([, at]) => at && at <= nowLocal).sort((a, b) => (a[1] < b[1] ? -1 : 1));
+    if (due.length) {
+      songs = await deps.loadSongs();
+      for (const [id] of due) {
+        const s = songs.find((x) => x.id === id);
+        if (s && s.videoUrl && !s.facebook) { song = s; via = "scheduled"; break; }
+        delete state.schedule[id]; // gone, posted elsewhere, or no video: drop the stale schedule
+      }
+    }
+    if (!song) {
+      if (!state.enabled) { if (due.length) await deps.saveState(state); return { skipped: "Daily posting is switched off" }; }
+      const dailyTime = state.dailyTime || DEFAULT_DAILY_TIME;
+      if (nowLocal.slice(11) < dailyTime) return { skipped: "Not yet " + dailyTime + " Eastern" };
+      if (state.log.some((l) => l.status === "posted" && (l.via || "daily") !== "scheduled" && l.date === today)) return { skipped: "Already posted today" };
+    }
   }
-  const songs = await deps.loadSongs();
+  if (!songs) songs = await deps.loadSongs();
   const queue = buildQueue(songs, state);
-  const song = opts.songId ? songs.find((s) => s.id === opts.songId) : queue[0];
+  if (!song) song = opts.songId ? songs.find((s) => s.id === opts.songId) : queue[0];
   state.lastRunAt = new Date(deps.now()).toISOString();
   if (!song) {
     state.log.unshift({ date: today, at: state.lastRunAt, status: "empty", note: "Nothing left to post: every video is on Facebook" });
@@ -276,19 +306,21 @@ async function runOnce(opts = {}) {
     const i = (catalog.songs || []).findIndex((s) => s.id === song.id);
     if (i >= 0) { catalog.songs[i].facebook = posted.url; catalog.songs[i].updatedAt = state.lastRunAt; await putJSON(CATALOG_KEY, catalog); }
     delete state.drafts[song.id];
-    state.log.unshift({ date: today, at: state.lastRunAt, status: "posted", songId: song.id, title: song.title,
+    delete state.schedule[song.id];
+    state.log.unshift({ date: today, at: state.lastRunAt, status: "posted", via, songId: song.id, title: song.title,
       fbId: posted.id, url: posted.url, text });
     state.log = state.log.slice(0, 200);
     await deps.saveState(state);
     return { posted: { songId: song.id, title: song.title, url: posted.url } };
   } catch (err) {
-    state.log.unshift({ date: today, at: state.lastRunAt, status: "error", songId: song.id, title: song.title, error: err.message });
+    if (via === "scheduled") delete state.schedule[song.id]; // don't retry every half hour; the log says why
+    state.log.unshift({ date: today, at: state.lastRunAt, status: "error", via, songId: song.id, title: song.title, error: err.message });
     state.log = state.log.slice(0, 200);
     await deps.saveState(state);
     return { error: err.message, songId: song.id, title: song.title };
   }
 }
 
-module.exports = { STATE_KEY, APP_URL, localDate, loadState, saveState, loadSongs, confOf, buildQueue,
+module.exports = { STATE_KEY, APP_URL, DEFAULT_DAILY_TIME, localDate, localDateTime, loadState, saveState, loadSongs, confOf, buildQueue,
   talkText, draftPost, composePost, resolvePage, fbCheck, fbPostVideo, runOnce,
   fbReelStart, fbReelUpload, fbReelFinish, fbReelStatus };
