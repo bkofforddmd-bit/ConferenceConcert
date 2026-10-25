@@ -5,7 +5,7 @@
 //   { action:"saveDraft", songId, text } -> keep the band's own wording
 //   { action:"skip", songId, undo? }     -> leave a song out of the queue (or put it back)
 //   { action:"postNow", songId }         -> post that song to Facebook right now
-//   { action:"schedule", songId, at }    -> post this song at "YYYY-MM-DDTHH:MM" Eastern ("" clears)
+//   { action:"schedule", songId, at }    -> post this song on "YYYY-MM-DD" at the posting time ("" clears)
 //   { action:"settings", dailyTime }     -> time of day for the daily series, "HH:MM" Eastern
 //   { action:"unpost", songId }          -> after deleting the post on Facebook by hand: forget the
 //                                           link on the song and mark the log entry, so it queues again
@@ -80,7 +80,7 @@ exports.handler = async (event) => {
     if (action === "schedule") {
       const songId = clip(body.songId, 120), at = clip(body.at, 16);
       if (!songId) return json(400, { error: "Need songId" });
-      if (at && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(at)) return json(400, { error: "Time must look like 2026-10-27T09:30" });
+      if (at && !/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(at)) return json(400, { error: "Date must look like 2026-10-27" });
       const state = await dp.loadState();
       if (!state.schedule) state.schedule = {};
       if (at) { state.schedule[songId] = at; state.skipped = (state.skipped || []).filter((id) => id !== songId); }

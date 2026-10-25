@@ -32,7 +32,13 @@ function localDate(ms) {
 }
 
 // ---------- state ----------
-const DEFAULT_DAILY_TIME = "09:00"; // Eastern
+const DEFAULT_DAILY_TIME = "07:00"; // Eastern — the one posting time for everything (see netlify.toml)
+// A schedule entry is a date ("2026-10-27"); it is due once that day's posting
+// time has arrived. Older entries with a time ("2026-10-27T09:30") still work.
+function scheduleDue(at, nowLocal, postTime) {
+  if (!at) return false;
+  return at.length === 10 ? (at + "T" + postTime) <= nowLocal : at <= nowLocal;
+}
 const emptyState = () => ({ enabled: false, dailyTime: DEFAULT_DAILY_TIME, schedule: {}, drafts: {}, skipped: [], log: [], lastRunAt: null });
 async function loadState() {
   const s = await getJSON(STATE_KEY, null);
@@ -270,7 +276,8 @@ async function runOnce(opts = {}) {
   let via = opts.force ? "manual" : "daily";
   let songs = null, song = null;
   if (!opts.force) {
-    const due = Object.entries(state.schedule).filter(([, at]) => at && at <= nowLocal).sort((a, b) => (a[1] < b[1] ? -1 : 1));
+    const postTime = state.dailyTime || DEFAULT_DAILY_TIME;
+    const due = Object.entries(state.schedule).filter(([, at]) => scheduleDue(at, nowLocal, postTime)).sort((a, b) => (a[1] < b[1] ? -1 : 1));
     if (due.length) {
       songs = await deps.loadSongs();
       for (const [id] of due) {
@@ -321,6 +328,6 @@ async function runOnce(opts = {}) {
   }
 }
 
-module.exports = { STATE_KEY, APP_URL, DEFAULT_DAILY_TIME, localDate, localDateTime, loadState, saveState, loadSongs, confOf, buildQueue,
+module.exports = { STATE_KEY, APP_URL, DEFAULT_DAILY_TIME, scheduleDue, localDate, localDateTime, loadState, saveState, loadSongs, confOf, buildQueue,
   talkText, draftPost, composePost, resolvePage, fbCheck, fbPostVideo, runOnce,
   fbReelStart, fbReelUpload, fbReelFinish, fbReelStatus };

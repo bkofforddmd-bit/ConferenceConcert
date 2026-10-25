@@ -68,12 +68,10 @@ In the app, unlock band mode and open the **Daily posts** tab:
   draft** to see what will be said; edit the words if you like and **Save**.
   Anything you don't touch is written automatically on the morning it posts.
 - **Post this one now** publishes immediately (useful as a first test).
-- Flip **Daily posting** on and pick its time of day (Eastern). Each day at that
-  time the next song goes out; the Page link is saved on the song, so the
-  Publish kit shows ✓. Any song can also be given its own **Post on** date and
-  time; it then posts at that moment whether or not the daily series is on.
-  The background check runs every half hour, so a post lands within 30 minutes
-  of its time.
+- Flip **Daily posting** on. Every post goes out at **7:00 AM Eastern**: the next
+  song in line each day while the switch is on, and any song you give a **Post
+  on** date (that one posts on its date whether or not the switch is on). The
+  Page link is saved on the song, so the Publish kit shows ✓.
 
 ## What gets posted
 
