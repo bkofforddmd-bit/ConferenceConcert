@@ -39,7 +39,31 @@ function scheduleDue(at, nowLocal, postTime) {
   if (!at) return false;
   return at.length === 10 ? (at + "T" + postTime) <= nowLocal : at <= nowLocal;
 }
-const emptyState = () => ({ enabled: false, dailyTime: DEFAULT_DAILY_TIME, schedule: {}, drafts: {}, skipped: [], log: [], lastRunAt: null });
+const emptyState = () => ({ enabled: false, dailyTime: DEFAULT_DAILY_TIME, schedule: {}, drafts: {}, skipped: [], log: [], lastRunAt: null,
+  voice: { notes: "", examples: [] } });
+// The band's own posts (saved with "Save my words", or Claude drafts the band
+// edited) — Claude reads the latest ones before writing, to sound like them.
+const VOICE_KEEP = 40, VOICE_USE = 10;
+function rememberVoice(state, song, text) {
+  if (!state.voice) state.voice = { notes: "", examples: [] };
+  const t = String(text || "").trim(); if (t.length < 20) return;
+  state.voice.examples = (state.voice.examples || []).filter((x) => x.songId !== song.id);
+  state.voice.examples.push({ songId: song.id, title: song.title || "", text: t.slice(0, 1500), at: new Date().toISOString() });
+  if (state.voice.examples.length > VOICE_KEEP) state.voice.examples = state.voice.examples.slice(-VOICE_KEEP);
+}
+// Older states: posts the band already wrote (in drafts) count from day one.
+function seedVoice(state) {
+  if (!state.voice) state.voice = { notes: "", examples: [] };
+  if (state.voice.seededAt) return 0; // once only, so a forgotten example stays forgotten
+  state.voice.seededAt = new Date().toISOString();
+  let n = 1;
+  for (const [songId, d] of Object.entries(state.drafts || {})) {
+    if (d && d.source === "band" && d.text && !state.voice.examples.some((x) => x.songId === songId)) {
+      state.voice.examples.push({ songId, title: "", text: String(d.text).slice(0, 1500), at: d.at || new Date().toISOString() }); n++;
+    }
+  }
+  return n;
+}
 async function loadState() {
   const s = await getJSON(STATE_KEY, null);
   return Object.assign(emptyState(), s || {});
@@ -102,12 +126,24 @@ Length: 50 to 85 words, in three parts separated by blank lines.
 
 Rules: name the speaker once, naturally (for example "Elder Gong said"); the talk title is optional. Quote at most four words from the talk, or none. Do not invent facts, stories or quotes that are not in the talk; the personal detail must stay general enough to be true of almost anyone, and it should come from the talk itself (what the speaker describes), not from a stock scene. Vary it from post to post. No hashtags, no headings, no bullet points, no sign-off. Output only the post text.`;
 
+// opts.voice = { notes, examples } — when the band has written posts, Claude
+// is told to match THEM over the generic voice rules above.
 async function draftPost(song, opts) {
   const Anthropic = require("@anthropic-ai/sdk");
   const client = new Anthropic();
   const talk = opts && opts.talk != null ? opts.talk : await talkText(song.talkUrl);
   const who = song.speaker && song.speaker !== "—" ? song.speaker : "the speaker";
+  const voice = (opts && opts.voice) || { notes: "", examples: [] };
+  const examples = (voice.examples || []).slice(-VOICE_USE).filter((x) => x.songId !== song.id);
+  const voiceBlock = examples.length || (voice.notes || "").trim()
+    ? [
+        "HOW THE BAND MEMBER ACTUALLY WRITES. These are posts they wrote themselves. Match their voice above everything in your instructions: their rhythm, sentence length, word choices, how personal they get, how they open and how they end. Keep the same overall length they use. Do not copy their sentences or reuse their specific stories; write a new post about today's talk that they could have written.",
+        (voice.notes || "").trim() ? "Their own notes about their voice: " + voice.notes.trim() : "",
+        ...examples.map((x, i) => "Example " + (i + 1) + (x.title ? " (about “" + x.title + "”)" : "") + ":\n" + x.text),
+      ].filter(Boolean).join("\n\n")
+    : "";
   const user = [
+    voiceBlock,
     `Song title: ${song.title}`,
     `Talk: "${song.talk || song.title}" by ${who}${song.session ? ` (${song.session} General Conference)` : ""}`,
     song.blurb ? `What we said about the song: ${song.blurb}` : "",
@@ -120,7 +156,7 @@ async function draftPost(song, opts) {
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: "default",
     output_config: { effort: "medium" },
-    system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+    system: [{ type: "text", text: SYSTEM + (examples.length ? "\n\nWhen examples of the band member\u2019s own posts are given, their voice wins over the voice and shape rules above. Keep only the hard rules: truthful to the talk, no URLs, no hashtags, end with one question." : ""), cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: user }],
   });
   if (res.stop_reason === "refusal") throw new Error("The writing model declined this one" + (res.stop_details && res.stop_details.explanation ? ": " + res.stop_details.explanation : "."));
@@ -305,7 +341,7 @@ async function runOnce(opts = {}) {
   }
   if (!song.videoUrl) return { error: "That song has no video" };
   try {
-    const draft = (state.drafts[song.id] && state.drafts[song.id].text) || await deps.draftPost(song);
+    const draft = (state.drafts[song.id] && state.drafts[song.id].text) || await deps.draftPost(song, { voice: state.voice });
     const text = composePost(song, draft);
     const posted = await deps.fbPostVideo(song, text);
     // remember where it went: on the song (so the Publish kit shows a check) and in the log
@@ -328,6 +364,6 @@ async function runOnce(opts = {}) {
   }
 }
 
-module.exports = { STATE_KEY, APP_URL, DEFAULT_DAILY_TIME, scheduleDue, localDate, localDateTime, loadState, saveState, loadSongs, confOf, buildQueue,
+module.exports = { STATE_KEY, APP_URL, DEFAULT_DAILY_TIME, scheduleDue, rememberVoice, seedVoice, VOICE_USE, localDate, localDateTime, loadState, saveState, loadSongs, confOf, buildQueue,
   talkText, draftPost, composePost, resolvePage, fbCheck, fbPostVideo, runOnce,
   fbReelStart, fbReelUpload, fbReelFinish, fbReelStatus };

@@ -5729,6 +5729,8 @@ function DailyPostsTab({songs=[]}){
   const [edits,setEdits]=useState({}); // songId -> text being edited
   const [confirm,setConfirm]=useState(null); // songId awaiting "Yes, post it"
   const [when,setWhen]=useState({});           // songId -> "YYYY-MM-DDTHH:MM" being picked
+  const [voiceNotes,setVoiceNotes]=useState(null); // band's notes being edited (null = not editing)
+  const [voiceOpen,setVoiceOpen]=useState(false);
   const [dailyTime,setDailyTime]=useState("");
   const pw=sessionStorage.getItem("cac_pw")||"";
   async function api(body){
@@ -5744,6 +5746,7 @@ function DailyPostsTab({songs=[]}){
     try{const d=await api(body);
       if(kind==="post"&&d.posted)setMsg("Posted: "+d.posted.title);
       if(kind==="unpost"&&d.ok)setMsg("Back in the queue: "+d.title+". Write your words on it under Next up, then Post this one now.");
+      if(kind==="save"&&d.ok)setMsg("Saved. Claude now learns from "+d.examples+" post"+(d.examples===1?"":"s")+" of yours.");
       await load();
       if(kind==="draft"&&d.draft)setEdits(e=>{const n={...e};delete n[songId];return n;});
     }catch(err){setMsg(err.message);}
@@ -5814,6 +5817,38 @@ function DailyPostsTab({songs=[]}){
           (!(st.facebook&&st.facebook.ok)||!st.claude)&&e("div",{style:{fontSize:12.5,color:C.src,marginTop:8}},
             "Setup steps are in SETUP-FACEBOOK.md in the site's files."))),
 
+      /* your voice */
+      e("h2",{style:h2},"Your voice"),
+      e("div",{style:{background:C.paper,border:`1.5px solid ${C.line}`,borderRadius:12,padding:"14px 16px"}},
+        e("p",{style:{margin:"0 0 8px",fontSize:13.5,color:C.text,lineHeight:1.6}},
+          "Claude reads your own posts before it writes a draft and copies how you write. Every post you save with ",
+          e("strong",null,"Save my words"),", including a Claude draft you edited, is added here. ",
+          (st.voice&&st.voice.examples.length)
+            ?e("span",null,"It is learning from ",e("strong",{style:{color:C.gold}},st.voice.examples.length+" post"+(st.voice.examples.length===1?"":"s")+" of yours"),
+                st.voice.examples.length>st.voice.using?" (the latest "+st.voice.using+" are used each time).":".")
+            :e("span",{style:{color:C.src}},"Nothing saved yet: write a few posts yourself first, then ask for a draft and compare.")),
+        e("div",{style:{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}},
+          e("span",{style:{fontSize:12.5,color:C.src}},"Notes about your voice (optional):"),
+          voiceNotes==null&&e("span",{style:{fontSize:13,color:C.text,fontStyle:(st.voice&&st.voice.notes)?"normal":"italic"}},
+            (st.voice&&st.voice.notes)||"none yet"),
+          voiceNotes==null&&e("button",{onClick:()=>setVoiceNotes((st.voice&&st.voice.notes)||""),style:{...btn,padding:"4px 10px",fontSize:12}},
+            (st.voice&&st.voice.notes)?"Edit":"Add notes")),
+        voiceNotes!=null&&e("div",{style:{marginTop:8}},
+          e("textarea",{value:voiceNotes,rows:3,onChange:ev=>setVoiceNotes(ev.target.value),autoFocus:true,
+            placeholder:"For example: I write like I talk. I mention my family. Short sentences. I never use the word \"journey\". I like to end with a real question.",
+            style:{width:"100%",padding:"9px 11px",fontSize:13.5,lineHeight:1.5,borderRadius:8,border:`1.5px solid ${C.line}`,background:"#0E1F3C",color:C.text,resize:"vertical",fontFamily:"Georgia,serif"}}),
+          e("div",{style:{display:"flex",gap:8,marginTop:6}},
+            e("button",{onClick:async()=>{await act("_voice","voice",{action:"voice",notes:voiceNotes});setVoiceNotes(null);},disabled:!!busy._voice,style:gold},busy._voice?"Saving…":"Save notes"),
+            e("button",{onClick:()=>setVoiceNotes(null),style:{...btn,border:0,color:C.src}},"Cancel"))),
+        st.voice&&st.voice.examples.length>0&&e("div",{style:{marginTop:10}},
+          e("button",{onClick:()=>setVoiceOpen(v=>!v),style:{...btn,padding:"4px 10px",fontSize:12}},(voiceOpen?"Hide":"Show")+" the posts it learns from"),
+          voiceOpen&&e("div",{style:{display:"flex",flexDirection:"column",gap:6,marginTop:8}},
+            st.voice.examples.map(x=>e("div",{key:x.songId,style:{display:"flex",gap:10,alignItems:"baseline",fontSize:13,background:"#0E1F3C",border:`1px solid ${C.line}`,borderRadius:8,padding:"6px 10px"}},
+              e("span",{style:{color:C.gold,fontWeight:"bold",whiteSpace:"nowrap"}},x.title),
+              e("span",{style:{color:C.src,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},x.preview+"…"),
+              e("button",{onClick:()=>act(x.songId,"forget",{action:"forgetExample",songId:x.songId}),title:"Stop learning from this one",
+                style:{border:0,background:"transparent",color:C.src,cursor:"pointer",fontSize:13}},"✕")))))),
+
       /* next up */
       e("h2",{style:h2},"Next up"),
       st.next.length===0&&e("p",{style:{color:C.src,fontStyle:"italic"}},"Nothing waiting — every video is already on Facebook."),
@@ -5882,7 +5917,7 @@ function DailyPostsTab({songs=[]}){
             e("button",{onClick:()=>act(sg.id,"skip",{action:"skip",songId:sg.id}),disabled:!!b,
               style:{...btn,marginLeft:"auto",color:C.src}},"Skip")));
       }),
-      msg&&e("p",{style:{color:/^(Posted|Back in the queue)/.test(msg)?C.gold:"#E66A5C",fontSize:13.5}},msg),
+      msg&&e("p",{style:{color:/^(Posted|Back in the queue|Saved)/.test(msg)?C.gold:"#E66A5C",fontSize:13.5}},msg),
 
       st.skipped.length>0&&e("div",null,
         e("h2",{style:h2},"Skipped"),

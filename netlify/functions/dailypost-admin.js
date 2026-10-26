@@ -7,6 +7,8 @@
 //   { action:"postNow", songId }         -> post that song to Facebook right now
 //   { action:"schedule", songId, at }    -> post this song on "YYYY-MM-DD" at the posting time ("" clears)
 //   { action:"settings", dailyTime }     -> time of day for the daily series, "HH:MM" Eastern
+//   { action:"voice", notes }            -> save the band's notes about their own voice
+//   { action:"forgetExample", songId }   -> drop one saved post from the voice examples
 //   { action:"unpost", songId }          -> after deleting the post on Facebook by hand: forget the
 //                                           link on the song and mark the log entry, so it queues again
 //   Reels (the Studio's vertical video, song.reelUrl), three short steps from the Publish kit:
@@ -31,6 +33,7 @@ exports.handler = async (event) => {
   try {
     if (action === "status") {
       const [state, songs, fb] = await Promise.all([dp.loadState(), dp.loadSongs(), dp.fbCheck()]);
+      if (dp.seedVoice(state)) await dp.saveState(state);
       const queue = dp.buildQueue(songs, state, { includeScheduled: true });
       return json(200, {
         enabled: state.enabled, lastRunAt: state.lastRunAt,
@@ -38,6 +41,8 @@ exports.handler = async (event) => {
         schedule: state.schedule || {},
         facebook: fb, claude: !!process.env.ANTHROPIC_API_KEY, appUrl: dp.APP_URL,
         queueLength: queue.length,
+        voice: { notes: (state.voice && state.voice.notes) || "", using: dp.VOICE_USE,
+          examples: ((state.voice && state.voice.examples) || []).slice().reverse().map((x) => ({ songId: x.songId, title: x.title || (songs.find((s) => s.id === x.songId) || {}).title || x.songId, at: x.at, preview: String(x.text).slice(0, 90) })) },
         next: queue.slice(0, 7).map((s) => ({ id: s.id, title: s.title, speaker: s.speaker, session: s.session,
           talk: s.talk, talkUrl: s.talkUrl, draft: state.drafts[s.id] || null, scheduledAt: (state.schedule || {})[s.id] || null })),
         skipped: (state.skipped || []).map((id) => { const s = songs.find((x) => x.id === id); return { id, title: s ? s.title : id }; }),
@@ -55,8 +60,9 @@ exports.handler = async (event) => {
       const songs = await dp.loadSongs();
       const song = songs.find((s) => s.id === songId);
       if (!song) return json(404, { error: "Song not found" });
-      const text = await dp.draftPost(song);
       const state = await dp.loadState();
+      dp.seedVoice(state);
+      const text = await dp.draftPost(song, { voice: state.voice });
       state.drafts[songId] = { text, source: "claude", at: new Date().toISOString() };
       await dp.saveState(state);
       return json(200, { ok: true, draft: state.drafts[songId], preview: dp.composePost(song, text) });
@@ -66,8 +72,10 @@ exports.handler = async (event) => {
       if (!songId || !text) return json(400, { error: "Need songId and text" });
       const state = await dp.loadState();
       state.drafts[songId] = { text, source: "band", at: new Date().toISOString() };
+      const songs = await dp.loadSongs();
+      dp.rememberVoice(state, songs.find((s) => s.id === songId) || { id: songId }, text);
       await dp.saveState(state);
-      return json(200, { ok: true, draft: state.drafts[songId] });
+      return json(200, { ok: true, draft: state.drafts[songId], examples: state.voice.examples.length });
     }
     if (action === "skip") {
       const songId = clip(body.songId, 120);
@@ -95,6 +103,20 @@ exports.handler = async (event) => {
       state.dailyTime = t;
       await dp.saveState(state);
       return json(200, { ok: true, dailyTime: t });
+    }
+    if (action === "voice") {
+      const state = await dp.loadState();
+      if (!state.voice) state.voice = { notes: "", examples: [] };
+      state.voice.notes = clip(body.notes, 2000);
+      await dp.saveState(state);
+      return json(200, { ok: true, notes: state.voice.notes });
+    }
+    if (action === "forgetExample") {
+      const songId = clip(body.songId, 120);
+      const state = await dp.loadState();
+      if (state.voice) state.voice.examples = (state.voice.examples || []).filter((x) => x.songId !== songId);
+      await dp.saveState(state);
+      return json(200, { ok: true, examples: state.voice ? state.voice.examples.length : 0 });
     }
     if (action === "unpost") {
       const songId = clip(body.songId, 120);
