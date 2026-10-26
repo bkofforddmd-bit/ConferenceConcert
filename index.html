@@ -5731,6 +5731,7 @@ function DailyPostsTab({songs=[]}){
   const [when,setWhen]=useState({});           // songId -> "YYYY-MM-DDTHH:MM" being picked
   const [voiceNotes,setVoiceNotes]=useState(null); // band's notes being edited (null = not editing)
   const [voiceOpen,setVoiceOpen]=useState(false);
+  const [limit,setLimit]=useState(7);           // how many of the queue to show
   const [dailyTime,setDailyTime]=useState("");
   const pw=sessionStorage.getItem("cac_pw")||"";
   async function api(body){
@@ -5738,9 +5739,10 @@ function DailyPostsTab({songs=[]}){
       headers:{"Content-Type":"application/json","x-upload-password":pw},body:JSON.stringify(body)});
     const d=await r.json();if(!r.ok)throw new Error(d.error||"Request failed");return d;
   }
-  async function load(){setState("loading");try{setSt(await api({action:"status"}));setState("ok");}
+  async function load(n){setState("loading");try{setSt(await api({action:"status",limit:n||limit}));setState("ok");}
     catch(err){setMsg(err.message);setState("error");}}
   useEffect(()=>{load();},[]);
+  function showMore(n){setLimit(n);load(n);}
   async function act(songId,kind,body){
     setBusy(b=>({...b,[songId]:kind}));setMsg("");
     try{const d=await api(body);
@@ -5917,6 +5919,12 @@ function DailyPostsTab({songs=[]}){
             e("button",{onClick:()=>act(sg.id,"skip",{action:"skip",songId:sg.id}),disabled:!!b,
               style:{...btn,marginLeft:"auto",color:C.src}},"Skip")));
       }),
+      st.queueLength>st.next.length&&e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",margin:"4px 0 8px"}},
+        e("span",{style:{fontSize:12.5,color:C.src}},"Showing "+st.next.length+" of "+st.queueLength+" in line."),
+        e("button",{onClick:()=>showMore(st.next.length+10),style:btn},"Show 10 more"),
+        e("button",{onClick:()=>showMore(st.queueLength),style:btn},"Show all "+st.queueLength)),
+      st.queueLength>7&&st.next.length>=st.queueLength&&e("div",{style:{margin:"4px 0 8px"}},
+        e("button",{onClick:()=>showMore(7),style:{...btn,border:0,color:C.src}},"Show only the next 7")),
       msg&&e("p",{style:{color:/^(Posted|Back in the queue|Saved)/.test(msg)?C.gold:"#E66A5C",fontSize:13.5}},msg),
 
       st.skipped.length>0&&e("div",null,

@@ -1,5 +1,5 @@
 // /.netlify/functions/dailypost-admin — the band's Daily posts panel (POST, x-upload-password).
-//   { action:"status" }                 -> settings, Facebook connection, next 7 in the queue (with drafts), log
+//   { action:"status", limit? }         -> settings, Facebook connection, next N in the queue (default 7, with drafts), log
 //   { action:"toggle", enabled }         -> switch daily posting on/off
 //   { action:"draft", songId }           -> write (or rewrite) the draft for a song with Claude
 //   { action:"saveDraft", songId, text } -> keep the band's own wording
@@ -43,7 +43,7 @@ exports.handler = async (event) => {
         queueLength: queue.length,
         voice: { notes: (state.voice && state.voice.notes) || "", using: dp.VOICE_USE,
           examples: ((state.voice && state.voice.examples) || []).slice().reverse().map((x) => ({ songId: x.songId, title: x.title || (songs.find((s) => s.id === x.songId) || {}).title || x.songId, at: x.at, preview: String(x.text).slice(0, 90) })) },
-        next: queue.slice(0, 7).map((s) => ({ id: s.id, title: s.title, speaker: s.speaker, session: s.session,
+        next: queue.slice(0, Math.max(1, Math.min(300, Math.round(Number(body.limit) || 7)))).map((s) => ({ id: s.id, title: s.title, speaker: s.speaker, session: s.session,
           talk: s.talk, talkUrl: s.talkUrl, draft: state.drafts[s.id] || null, scheduledAt: (state.schedule || {})[s.id] || null })),
         skipped: (state.skipped || []).map((id) => { const s = songs.find((x) => x.id === id); return { id, title: s ? s.title : id }; }),
         log: state.log.slice(0, 30),
